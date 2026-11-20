@@ -1,0 +1,176 @@
+// ==============================================================================
+// PRISMA SCHEMA - BABA HUMILDES / TROPICANA MANAGER CONTRATO DE DADOS
+// ==============================================================================
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Temporada {
+  id                     Int               @id @default(autoincrement())
+  ano                    Int               @unique
+  valorMensalidadePadrao Float             @default(25.0)
+  ativa                  Boolean           @default(false)
+  atletas                AtletaTemporada[]
+  mensalidades           Mensalidade[]
+  partidas               Partida[]
+  despesas               Despesa[]
+  times                  Time[]
+}
+
+model Time {
+  id                Int               @id @default(autoincrement())
+  nome              String
+  logoUrl           String?           @default("/default-team.png")
+  cor               String            @default("#75a88a")
+  badge             String            @default("A")
+  temporadaId       Int
+  temporada         Temporada         @relation(fields: [temporadaId], references: [id])
+  atletas           AtletaTemporada[]
+  partidasMandante  Partida[]         @relation("PartidaTimeA")
+  partidasVisitante Partida[]         @relation("PartidaTimeB")
+}
+
+model Atleta {
+  id           Int               @id @default(autoincrement())
+  nomeCompleto String?           // Privado (não exibido publicamente)
+  apelido      String            // Público
+  telefone     String?           // Privado/Opcional
+  fotoUrl      String?           @default("/default-player.png")
+  isDiretoria  Boolean           @default(false)
+  posicao      String?           // Goleiro, Atacante, Meio campo, Volante, Zagueiro, Lateral
+  numeroCamisa String?
+  nomeCamisa   String?
+  historico    AtletaTemporada[]
+  mensalidades Mensalidade[]
+  gols         Gol[]
+  assistencias Assistencia[]
+  cartoes      Cartao[]
+  presencas    Presenca[]
+}
+
+model AtletaTemporada {
+  id          Int       @id @default(autoincrement())
+  ativo       Boolean   @default(true)
+  atletaId    Int
+  temporadaId Int
+  timeId      Int?
+  atleta      Atleta    @relation(fields: [atletaId], references: [id])
+  temporada   Temporada @relation(fields: [temporadaId], references: [id])
+  time        Time?     @relation(fields: [timeId], references: [id])
+
+  @@unique([atletaId, temporadaId])
+}
+
+model Juiz {
+  id       Int       @id @default(autoincrement())
+  nome     String
+  telefone String?
+  fotoUrl  String?   @default("/default-player.png")
+  ativo    Boolean   @default(true)
+  partidas Partida[]
+  despesas Despesa[]
+}
+
+model Partida {
+  id           Int           @id @default(autoincrement())
+  data         DateTime
+  tipo         String        @default("Domingo") // "Domingo", "Feriado", "Especial"
+  placarA      Int           @default(0)
+  placarB      Int           @default(0)
+  temporadaId  Int
+  temporada    Temporada     @relation(fields: [temporadaId], references: [id])
+  timeAId      Int?
+  timeBId      Int?
+  timeA        Time?         @relation("PartidaTimeA", fields: [timeAId], references: [id])
+  timeB        Time?         @relation("PartidaTimeB", fields: [timeBId], references: [id])
+  status       String        @default("Agendada") // "Agendada", "Finalizada", "Cancelada"
+  juizId       Int?
+  juiz         Juiz?         @relation(fields: [juizId], references: [id])
+  gols         Gol[]
+  assistencias Assistencia[]
+  cartoes      Cartao[]
+  presencas    Presenca[]
+}
+
+model Gol {
+  id         Int     @id @default(autoincrement())
+  quantidade Int     @default(1)
+  minuto     Int?
+  atletaId   Int
+  partidaId  Int
+  atleta     Atleta  @relation(fields: [atletaId], references: [id])
+  partida    Partida @relation(fields: [partidaId], references: [id], onDelete: Cascade)
+}
+
+model Assistencia {
+  id         Int     @id @default(autoincrement())
+  quantidade Int     @default(1)
+  atletaId   Int
+  partidaId  Int
+  atleta     Atleta  @relation(fields: [atletaId], references: [id])
+  partida    Partida @relation(fields: [partidaId], references: [id], onDelete: Cascade)
+}
+
+model Cartao {
+  id        Int     @id @default(autoincrement())
+  tipo      String  // "Amarelo" ou "Vermelho"
+  atletaId  Int
+  partidaId Int
+  atleta    Atleta  @relation(fields: [atletaId], references: [id])
+  partida   Partida @relation(fields: [partidaId], references: [id], onDelete: Cascade)
+}
+
+model Presenca {
+  id         Int     @id @default(autoincrement())
+  atletaId   Int
+  partidaId  Int
+  atleta     Atleta  @relation(fields: [atletaId], references: [id])
+  partida    Partida @relation(fields: [partidaId], references: [id], onDelete: Cascade)
+  confirmado Boolean @default(false)
+
+  @@unique([atletaId, partidaId])
+}
+
+model Mensalidade {
+  id             Int       @id @default(autoincrement())
+  mes            Int       // 1 a 12
+  valor          Float
+  pago           Boolean   @default(false)
+  dataPagamento  DateTime?
+  formaPagamento String?   // "Dinheiro" ou "Pix"
+  comprovanteUrl String?   // URL do arquivo/imagem
+  atletaId       Int
+  atleta         Atleta    @relation(fields: [atletaId], references: [id])
+  temporadaId    Int
+  temporada      Temporada @relation(fields: [temporadaId], references: [id])
+
+  @@unique([atletaId, temporadaId, mes])
+}
+
+model Despesa {
+  id          Int       @id @default(autoincrement())
+  descricao   String
+  categoria   String    @default("Outros")
+  valor       Float
+  data        DateTime  @default(now())
+  temporadaId Int
+  temporada   Temporada @relation(fields: [temporadaId], references: [id])
+  juizId      Int?
+  juiz        Juiz?     @relation(fields: [juizId], references: [id])
+}
+
+model Aviso {
+  id             Int      @id @default(autoincrement())
+  titulo         String
+  conteudo       String
+  tipo           String   @default("Geral") // "Geral", "Financeiro", "Regra", "Convocação"
+  dataPublicacao DateTime @default(now())
+  ativo          Boolean  @default(true)
+  destaque       Boolean  @default(false)
+}

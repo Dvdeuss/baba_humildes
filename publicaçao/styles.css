@@ -785,3 +785,354 @@ body::before {
   opacity: 0.07;
 mix-blend-mode: screen;
 }
+
+/* ==========================================================================
+   COMPONENTES DO BABA TROPICANA MANAGER ADAPTADOS À IDENTIDADE BABA HUMILDES
+   ========================================================================== */
+
+/* Badge da Temporada na Topbar */
+.season-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  background: #203a29;
+  color: var(--gold);
+  border: 1px solid #3c5d46;
+  padding: 6px 12px;
+  border-radius: 20px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.season-badge::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  background: var(--gold);
+  border-radius: 50%;
+  box-shadow: 0 0 6px var(--gold);
+}
+
+.athlete-entry-btn {
+  margin-top: 6px;
+}
+
+/* Sub-navegação em abas (Financeiro, Estatísticas, Atletas) */
+.subtabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 12px;
+  overflow-x: auto;
+}
+
+.tab-btn {
+  background: #14221b;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font: 600 12px var(--font);
+  padding: 9px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tab-btn:hover {
+  background: #1e3328;
+  color: var(--text);
+  border-color: #3f5e49;
+}
+
+.tab-btn.active {
+  background: var(--gold);
+  color: #121c15;
+  border-color: var(--gold);
+  font-weight: 700;
+  box-shadow: 0 4px 14px rgba(213, 180, 106, 0.2);
+}
+
+/* Badges de Status e Disciplina */
+.badge-tag {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  letter-spacing: 0.5px;
+}
+
+.badge-tag.danger {
+  background: #481d1b;
+  color: #f78d88;
+  border: 1px solid #7a312e;
+}
+
+.badge-tag.warning {
+  background: #463415;
+  color: #ffd874;
+  border: 1px solid #755925;
+}
+
+.badge-tag.success {
+  background: #193826;
+  color: #8ce4a6;
+  border: 1px solid #28593c;
+}
+
+.badge-tag.info {
+  background: #1c2b3d;
+  color: #8ec3f8;
+  border: 1px solid #2a4768;
+}
+
+.badge-tag.gold {
+  background: #39311a;
+  color: var(--gold);
+  border: 1px solid #6b5c33;
+}
+
+/* Mural de Avisos */
+.notices-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+  margin-top: 14px;
+}
+
+.notice-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  transition: transform 0.2s, border-color 0.2s;
+}
+
+.notice-card:hover {
+  border-color: #3b5a45;
+  transform: translateY(-2px);
+}
+
+.notice-card.featured {
+  border: 1px solid var(--gold);
+  background: linear-gradient(145deg, #182c20, #132219);
+  box-shadow: 0 8px 24px rgba(213, 180, 106, 0.12);
+}
+
+.notice-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.notice-title {
+  font: 700 18px var(--display);
+  margin: 0;
+  color: var(--text);
+}
+
+.notice-date {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.notice-body {
+  color: #c5d5cb;
+  font-size: 12px;
+  line-height: 1.6;
+  flex: 1;
+  white-space: pre-wrap;
+}
+
+.notice-footer {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid #203527;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* Banner de Aviso em Destaque na Home */
+.featured-home-notice {
+  background: linear-gradient(145deg, #203526, #121f17);
+  border: 1px solid var(--gold);
+  border-radius: 10px;
+  padding: 16px 20px;
+  margin: 16px 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+}
+
+.featured-home-notice .pin {
+  font-size: 20px;
+  color: var(--gold);
+}
+
+/* Quadro de Juízes / Árbitros */
+.referees-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.referee-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 20px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.referee-avatar {
+  width: 70px;
+  height: 70px;
+  border-radius: 50%;
+  border: 2px solid var(--gold);
+  background: #1e3328;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  margin-bottom: 12px;
+  font: 800 24px var(--display);
+  color: var(--gold);
+}
+
+.referee-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.referee-name {
+  font: 700 18px var(--display);
+  margin: 0 0 4px;
+}
+
+.referee-phone {
+  color: var(--muted);
+  font-size: 11px;
+  margin-bottom: 12px;
+}
+
+/* Card de WhatsApp para Cobrança */
+.whatsapp-box {
+  background: #0f1913;
+  border: 1px solid #263e2f;
+  border-radius: 8px;
+  padding: 14px;
+  font-family: monospace;
+  font-size: 11px;
+  color: #a4cca8;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  user-select: all;
+  margin: 12px 0;
+}
+
+/* Súmula Interativa e Eventos */
+.sumula-events-container {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.sumula-team-column {
+  background: #111e17;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.sumula-team-column h3 {
+  font: 700 16px var(--display);
+  margin: 0 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.event-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  background: #182a20;
+  border-radius: 6px;
+  margin-bottom: 6px;
+  font-size: 11px;
+}
+
+.event-item .author {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.event-item .assist {
+  font-size: 10px;
+  color: var(--gold);
+  margin-left: 6px;
+}
+
+.event-item .btn-remove {
+  background: transparent;
+  border: 0;
+  color: #e57373;
+  cursor: pointer;
+  padding: 2px 6px;
+  font-size: 12px;
+}
+
+/* Trava de Presença */
+.presence-lock-alert {
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #391c1b;
+  border: 1px solid #7c312d;
+  color: #f7a8a4;
+  font-size: 11px;
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Tabela de Classificação dos Times */
+.standings-table th, .standings-table td {
+  text-align: center;
+}
+
+.standings-table th:first-child, .standings-table td:first-child,
+.standings-table th:nth-child(2), .standings-table td:nth-child(2) {
+  text-align: left;
+}
+
+.standings-pos {
+  font: 800 16px var(--display);
+  color: var(--gold);
+}
+
+.standings-pts {
+  font: 800 16px var(--display);
+  color: #fff;
+}
+

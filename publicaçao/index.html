@@ -26,104 +26,65 @@
       <div class="side-label">MENU PRINCIPAL</div>
       <nav id="navigation">
         <button class="nav-item active" data-page="inicio"><span>⌂</span> Visão geral</button>
-        <button class="nav-item" data-page="atletas"><span>♙</span> Atletas</button>
-        <button class="nav-item" data-page="times"><span>⚑</span> Times</button>
-        <button class="nav-item" data-page="partidas"><span>◷</span> Partidas</button>
+        <button class="nav-item" data-page="atletas"><span>♙</span> Atletas & Elenco</button>
+        <button class="nav-item" data-page="times"><span>⚑</span> Times & Tabela</button>
+        <button class="nav-item" data-page="partidas"><span>◷</span> Partidas & Súmula</button>
         <button class="nav-item" data-page="estatisticas"><span>▥</span> Estatísticas</button>
         <button class="nav-item" data-page="financeiro"><span>＄</span> Financeiro</button>
+        <button class="nav-item" data-page="avisos"><span>📢</span> Avisos Oficiais</button>
+        <button class="nav-item" data-page="juizes"><span>⚖</span> Quadro de Árbitros</button>
       </nav>
       <div class="sidebar-bottom">
-        <div class="sunday-card"><span class="live-dot"></span>
-          <div><b>Baba aos domingos</b><small>Contribuição: R$ 25,00</small></div>
+        <div class="sunday-card">
+          <span class="live-dot"></span>
+          <div>
+            <b id="sidebarSeasonLabel">Temporada Ativa: 2026</b>
+            <small id="sidebarFeeLabel">Mensalidade: R$ 25,00</small>
+          </div>
         </div>
-        <button class="admin-entry" id="adminButton">⚙ Área administrativa <span id="adminStatus">Entrar
-            →</span></button>
-      </div><button class="admin-entry" id="athleteButton">
-        ⚽ Área do Atleta <span>Entrar →</span>
-      </button>
+        <button class="admin-entry" id="adminButton">
+          ⚙ Área administrativa <span id="adminStatus">Entrar →</span>
+        </button>
+        <button class="admin-entry athlete-entry-btn" id="athleteButton">
+          ⚽ Área do Atleta <span>Entrar →</span>
+        </button>
+      </div>
     </aside>
 
     <main class="main-content">
       <header class="topbar">
         <button class="mobile-menu" id="mobileMenu" aria-label="Abrir menu">☰</button>
         <div>
-          <div class="eyebrow">PALESTINA / SALVADOR - BA</div>
+          <div class="eyebrow" id="topbarEyebrow">PALESTINA / SALVADOR - BA • TEMPORADA OFICIAL</div>
           <div class="top-title" id="pageTitle">Visão geral</div>
         </div>
-        <div class="top-actions"><span class="public-pill"><i></i> Portal público</span>
-          <div class="avatar">
+        <div class="top-actions">
+          <span class="season-badge" id="topbarSeasonBadge">Temporada 2026</span>
+          <span class="public-pill"><i></i> Portal público</span>
+          <div class="avatar" id="topbarAvatar" title="Baba Humildes">
             <img src="./public/escudo-baba-humildes-4k.png" alt="Baba Humildes">
           </div>
         </div>
       </header>
+      
       <div class="content" id="appContent">
-        <section class="hero">
-          <div class="hero-copy">
-            <div class="hero-kicker">⚽ FUTEBOL • UNIÃO • RESPEITO</div>
-            <h1>O futebol nos une.<br><em>A resenha nos fortalece.</em></h1>
-            <p>Dois times, uma paixão e uma comunidade que se encontra todo domingo.</p>
-            <div class="hero-actions">
-              <button class="btn btn-gold" data-goto="partidas">Ver partidas <span>↗</span></button>
-              <button class="btn btn-outline" data-goto="atletas">Conhecer atletas</button>
-            </div>
-          </div>
-
-          <div class="hero-watermark">HUMILDES</div>
-        </section>
-        <section class="stats-grid" id="overviewStats"></section>
-        <section class="section-grid">
-          <div class="panel next-match">
-            <div class="panel-heading">
-              <div><span class="eyebrow">AGENDA</span>
-                <h2>Próximo baba</h2>
-              </div><span class="tag tag-green">DOMINGO</span>
-            </div>
-            <div id="nextMatchContent" class="empty-state compact">Nenhuma partida cadastrada ainda.<br><small>O
-                administrador poderá adicionar o próximo confronto.</small></div>
-          </div>
-          <div class="panel contribution">
-            <div class="panel-heading">
-              <div><span class="eyebrow">CONTRIBUIÇÃO</span>
-                <h2>Mensalidade / baba</h2>
-              </div><span class="coin-icon">R$</span>
-            </div>
-            <div class="contribution-value">R$ 25<span>,00</span></div>
-            <p>Valor padrão por atleta. Consulte a administração para confirmar pagamentos e períodos.</p><button
-              class="text-button" data-goto="financeiro">Consultar financeiro →</button>
-          </div>
-        </section>
-        <section class="section-grid lower-grid">
-          <div class="panel">
-            <div class="panel-heading">
-              <div><span class="eyebrow">DESTAQUE</span>
-                <h2>Artilharia</h2>
-              </div><button class="text-button" data-goto="estatisticas">Ver ranking →</button>
-            </div>
-            <div id="topScorers" class="list-wrap"></div>
-          </div>
-          <div class="panel">
-            <div class="panel-heading">
-              <div><span class="eyebrow">NOSSO GRUPO</span>
-                <h2>Times</h2>
-              </div><button class="text-button" data-goto="times">Ver times →</button>
-            </div>
-            <div id="teamPreview" class="team-preview"></div>
-          </div>
-        </section>
-        <footer>© <span id="year"></span> BABA HUMILDES · Palestina, Salvador - BA <span>Feito para a resenha
-            continuar.</span></footer>
+        <!-- O conteúdo dinâmico de cada página é renderizado aqui pelo app.js -->
       </div>
     </main>
   </div>
+
   <div class="toast" id="toast" role="status"></div>
+  
   <dialog id="adminDialog" class="modal">
     <form method="dialog" class="modal-close"><button aria-label="Fechar">×</button></form>
     <div id="adminDialogBody"></div>
   </dialog>
+  
   <dialog id="editDialog" class="modal wide">
     <form method="dialog" class="modal-close"><button aria-label="Fechar">×</button></form>
     <div id="editDialogBody"></div>
   </dialog>
+
   <script type="module" src="./app.js"></script>
 </body>
 

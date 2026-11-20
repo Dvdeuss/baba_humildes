@@ -1,2277 +1,2669 @@
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
 
-const $ = (s, root=document) => root.querySelector(s);
-const money = n => Number(n||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
-const esc = s => String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const id = () => crypto.randomUUID();
-let db = null, session = null, currentPage = 'inicio';
+// ==============================================================================
+// BABA HUMILDES / BABA TROPICANA MANAGER - CORE ENGINE (ULTRON)
+// ==============================================================================
 
+const $ = (s, root = document) => root.querySelector(s);
+const $$ = (s, root = document) => Array.from(root.querySelectorAll(s));
+const money = n => Number(n || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const id = () => crypto.randomUUID();
+
+let db = null;
+let session = null;
+let isAdmin = false;
+let currentAthlete = null;
+let currentPage = 'inicio';
+
+// Estado global do aplicativo
 let state = {
-  athletes: [],
-  teams: [
-    {
-      id: 'team-a',
-      name: 'Time A',
-      color: '#75a88a',
-      badge: 'A'
-    },
-    {
-      id: 'team-b',
-      name: 'Time B',
-      color: '#d5b46a',
-      badge: 'B'
-    }
+  temporadas: [
+    { id: 1, ano: 2026, valor_mensalidade_padrao: 25.00, ativa: true }
   ],
+  teams: [
+    { id: 'team-a', nome: 'Time A', cor: '#75a88a', badge: 'A', logo_url: './public/escudo-baba-humildes-4k.png', temporada_id: 1 },
+    { id: 'team-b', nome: 'Time B', cor: '#d5b46a', badge: 'B', logo_url: './public/escudo-baba-humildes-4k.png', temporada_id: 1 }
+  ],
+  athletes: [],
+  athletes_temporada: [],
+  juizes: [],
   matches: [],
   goals: [],
+  assistencias: [],
   cards: [],
-  payments: [],
-  attendance_confirmations: []
+  presencas: [],
+  mensalidades: [],
+  despesas: [],
+  avisos: []
 };
 
 const demo = !SUPABASE_URL || !SUPABASE_ANON_KEY;
 
-async function init(){
-  $('#year').textContent = new Date().getFullYear();
-  if(!demo){
-    const { createClient } = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm');
-    db = createClient(SUPABASE_URL,SUPABASE_ANON_KEY);
-    const {data:{session:s}} = await db.auth.getSession(); session=s;
-    db.auth.onAuthStateChange((event, s) => {
-  session = s;
-  updateAdminStatus();
+// ------------------------------------------------------------------------------
+// 1. INICIALIZAÇÃO E CARREGAMENTO DE DADOS
+// ------------------------------------------------------------------------------
 
-  if(event === 'PASSWORD_RECOVERY'){
-    showPasswordReset();
+async function init() {
+  const activeSeason = getActiveTemporada();
+  if ($('#topbarSeasonBadge')) {
+    $('#topbarSeasonBadge').textContent = `Temporada ${activeSeason ? activeSeason.ano : new Date().getFullYear()}`;
   }
-});
-    await loadRemote();
-  } else { loadLocal(); }
-  updateAdminStatus(); bindNavigation(); renderPage('inicio');
+  if ($('#sidebarSeasonLabel')) {
+    $('#sidebarSeasonLabel').textContent = `Temporada Ativa: ${activeSeason ? activeSeason.ano : new Date().getFullYear()}`;
+  }
+
+  if (!demo) {
+    try {
+      const { createClient } = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm');
+      db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+      const { data: { session: s } } = await db.auth.getSession();
+      session = s;
+      if (session) {
+        const { data: isAdminUser } = await db.rpc('is_admin');
+        isAdmin = !!isAdminUser;
+      }
+      db.auth.onAuthStateChange(async (event, s) => {
+        session = s;
+        if (session) {
+          const { data: isAdminUser } = await db.rpc('is_admin');
+          isAdmin = !!isAdminUser;
+        } else {
+          isAdmin = false;
+        }
+        updateAdminStatus();
+        if (event === 'PASSWORD_RECOVERY') showPasswordReset();
+      });
+      await loadRemote();
+    } catch (err) {
+      console.warn('Falha na conexão Supabase, inicializando modo local:', err);
+      loadLocal();
+    }
+  } else {
+    loadLocal();
+  }
+
+  updateAdminStatus();
+  bindNavigation();
+  renderPage('inicio');
 }
-function loadLocal(){try{const saved=JSON.parse(localStorage.getItem('bh-demo-data'));if(saved)state={...state,...saved};}catch{}}
-function saveLocal(){localStorage.setItem('bh-demo-data',JSON.stringify(state));}
 
+function getActiveTemporada() {
+  return state.temporadas.find(t => t.ativa) || state.temporadas[0] || { id: 1, ano: 2026, valor_mensalidade_padrao: 25.00, ativa: true };
+}
 
-async function loadRemote(){
-  const tables = [
-    'athletes',
-    'teams',
-    'matches',
-    'goals',
-    'cards',
-    'attendance_confirmations'
+function loadLocal() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('bh-demo-data-v2'));
+    if (saved && saved.athletes && saved.athletes.length > 0) {
+      state = { ...state, ...saved };
+      return;
+    }
+  } catch (e) {}
+  populateDemoData();
+  saveLocal();
+}
+
+function saveLocal() {
+  localStorage.setItem('bh-demo-data-v2', JSON.stringify(state));
+}
+
+function populateDemoData() {
+  state.temporadas = [
+    { id: 1, ano: 2026, valor_mensalidade_padrao: 25.00, ativa: true }
   ];
 
-  for(const t of tables){
-    const orderColumn = t === 'attendance_confirmations'
-      ? 'response_at'
-      : 'created_at';
+  state.teams = [
+    { id: 'team-a', nome: 'Time A (Verde)', cor: '#75a88a', badge: 'A', logo_url: './public/escudo-baba-humildes-4k.png', temporada_id: 1 },
+    { id: 'team-b', nome: 'Time B (Dourado)', cor: '#d5b46a', badge: 'B', logo_url: './public/escudo-baba-humildes-4k.png', temporada_id: 1 }
+  ];
 
-    const {data,error} = await db
-      .from(t)
-      .select('*')
-      .order(orderColumn,{ascending:true});
+  state.juizes = [
+    { id: 'j-1', nome: 'Jorge da Federação', telefone: '(71) 98877-6655', foto_url: '', ativo: true },
+    { id: 'j-2', nome: 'Carlos Árbitro', telefone: '(71) 99123-4567', foto_url: '', ativo: true }
+  ];
 
-    if(error){
-      console.error(error);
-      continue;
+  state.athletes = [
+    { id: 'a-1', apelido: 'Deivide', nome_completo: 'Deivide Silva', telefone: '(71) 99999-1111', posicao: 'Atacante', numero_camisa: 10, is_diretoria: true, team_id: 'team-a' },
+    { id: 'a-2', apelido: 'Dão', nome_completo: 'Edvaldo Santos', telefone: '(71) 99999-2222', posicao: 'Meio-campo', numero_camisa: 8, is_diretoria: true, team_id: 'team-b' },
+    { id: 'a-3', apelido: 'Vitinho', nome_completo: 'Vitor Hugo', telefone: '(71) 99999-3333', posicao: 'Atacante', numero_camisa: 9, is_diretoria: false, team_id: 'team-a' },
+    { id: 'a-4', apelido: 'Neguinho', nome_completo: 'Antonio Carlos', telefone: '(71) 99999-4444', posicao: 'Goleiro', numero_camisa: 1, is_diretoria: false, team_id: 'team-a' },
+    { id: 'a-5', apelido: 'Rodrigo Paredão', nome_completo: 'Rodrigo Lima', telefone: '(71) 99999-5555', posicao: 'Goleiro', numero_camisa: 12, is_diretoria: false, team_id: 'team-b' },
+    { id: 'a-6', apelido: 'Luquinhas', nome_completo: 'Lucas Ferreira', telefone: '(71) 99999-6666', posicao: 'Lateral', numero_camisa: 6, is_diretoria: false, team_id: 'team-a' },
+    { id: 'a-7', apelido: 'Marcelo', nome_completo: 'Marcelo Oliveira', telefone: '(71) 99999-7777', posicao: 'Zagueiro', numero_camisa: 3, is_diretoria: false, team_id: 'team-b' },
+    { id: 'a-8', apelido: 'Binho', nome_completo: 'Fabio Barreto', telefone: '(71) 99999-8888', posicao: 'Volante', numero_camisa: 5, is_diretoria: false, team_id: 'team-b' },
+    { id: 'a-9', apelido: 'Paulinho', nome_completo: 'Paulo Souza', telefone: '(71) 99999-9999', posicao: 'Lateral', numero_camisa: 2, is_diretoria: false, team_id: 'team-b' },
+    { id: 'a-10', apelido: 'Bruninho', nome_completo: 'Bruno Andrade', telefone: '(71) 99999-0000', posicao: 'Meio-campo', numero_camisa: 7, is_diretoria: false, team_id: 'team-a' }
+  ];
+
+  state.athletes_temporada = state.athletes.map(a => ({
+    id: `at-${a.id}`,
+    ativo: true,
+    atleta_id: a.id,
+    temporada_id: 1,
+    time_id: a.team_id
+  }));
+
+  const pastDate1 = '2026-11-08';
+  const pastDate2 = '2026-11-15';
+  const nextSunday = '2026-11-22';
+
+  state.matches = [
+    {
+      id: 'm-1',
+      data: pastDate1,
+      hora: '07:30',
+      tipo: 'Domingo',
+      time_a: 'team-a',
+      time_b: 'team-b',
+      placar_a: 3,
+      placar_b: 2,
+      status: 'Finalizada',
+      juiz_id: 'j-1',
+      temporada_id: 1
+    },
+    {
+      id: 'm-2',
+      data: pastDate2,
+      hora: '07:30',
+      tipo: 'Domingo',
+      time_a: 'team-b',
+      time_b: 'team-a',
+      placar_a: 1,
+      placar_b: 1,
+      status: 'Finalizada',
+      juiz_id: 'j-2',
+      temporada_id: 1
+    },
+    {
+      id: 'm-3',
+      data: nextSunday,
+      hora: '07:30',
+      tipo: 'Domingo',
+      time_a: 'team-a',
+      time_b: 'team-b',
+      placar_a: 0,
+      placar_b: 0,
+      status: 'Agendada',
+      juiz_id: 'j-1',
+      temporada_id: 1
     }
+  ];
 
-    state[t] = data || [];
-  }
+  state.goals = [
+    { id: 'g-1', match_id: 'm-1', athlete_id: 'a-1', minute: 15, team_id: 'team-a' },
+    { id: 'g-2', match_id: 'm-1', athlete_id: 'a-3', minute: 28, team_id: 'team-a' },
+    { id: 'g-3', match_id: 'm-1', athlete_id: 'a-1', minute: 42, team_id: 'team-a' },
+    { id: 'g-4', match_id: 'm-1', athlete_id: 'a-2', minute: 30, team_id: 'team-b' },
+    { id: 'g-5', match_id: 'm-1', athlete_id: 'a-8', minute: 50, team_id: 'team-b' },
+    { id: 'g-6', match_id: 'm-2', athlete_id: 'a-2', minute: 20, team_id: 'team-b' },
+    { id: 'g-7', match_id: 'm-2', athlete_id: 'a-10', minute: 45, team_id: 'team-a' }
+  ];
 
-  // Carrega a situação financeira pela consulta pública
-  const {data: payments, error: paymentsError} = await db
-    .from('public_payment_status')
-    .select('*')
-    .order('due_date',{ascending:true});
+  state.assistencias = [
+    { id: 'as-1', match_id: 'm-1', athlete_id: 'a-10' },
+    { id: 'as-2', match_id: 'm-1', athlete_id: 'a-1' },
+    { id: 'as-3', match_id: 'm-1', athlete_id: 'a-9' },
+    { id: 'as-4', match_id: 'm-2', athlete_id: 'a-3' }
+  ];
 
-  if(paymentsError){
-    console.error('Erro ao carregar situação financeira:',paymentsError);
-  }else{
-    state.payments = payments || [];
+  state.cards = [
+    { id: 'c-1', match_id: 'm-1', athlete_id: 'a-7', type: 'Amarelo' },
+    { id: 'c-2', match_id: 'm-2', athlete_id: 'a-7', type: 'Amarelo' },
+    { id: 'c-3', match_id: 'm-2', athlete_id: 'a-8', type: 'Amarelo' }
+  ];
+
+  state.presencas = [
+    { id: 'p-1', match_id: 'm-3', athlete_id: 'a-1', confirmado: true },
+    { id: 'p-2', match_id: 'm-3', athlete_id: 'a-2', confirmado: true },
+    { id: 'p-3', match_id: 'm-3', athlete_id: 'a-3', confirmado: true },
+    { id: 'p-4', match_id: 'm-3', athlete_id: 'a-4', confirmado: true }
+  ];
+
+  // Mensalidades: Diretoria isenta. Outros atletas têm histórico.
+  state.mensalidades = [
+    { id: 'men-1', atleta_id: 'a-3', mes: 10, valor: 25.00, pago: true, forma_pagamento: 'Pix', temporada_id: 1 },
+    { id: 'men-2', atleta_id: 'a-3', mes: 11, valor: 25.00, pago: true, forma_pagamento: 'Pix', temporada_id: 1 },
+    { id: 'men-3', atleta_id: 'a-6', mes: 10, valor: 25.00, pago: true, forma_pagamento: 'Dinheiro', temporada_id: 1 },
+    { id: 'men-4', atleta_id: 'a-6', mes: 11, valor: 25.00, pago: false, temporada_id: 1 },
+    { id: 'men-5', atleta_id: 'a-9', mes: 9, valor: 25.00, pago: false, temporada_id: 1 }, // Inadimplente (> 1 mês e 10 dias)
+    { id: 'men-6', atleta_id: 'a-9', mes: 10, valor: 25.00, pago: false, temporada_id: 1 }
+  ];
+
+  state.despesas = [
+    { id: 'd-1', descricao: 'Taxa de Arbitragem - Rodada 1', categoria: 'Árbitro', valor: 80.00, data: pastDate1, juiz_id: 'j-1', temporada_id: 1 },
+    { id: 'd-2', descricao: 'Gelo e Água Mineral', categoria: 'Material', valor: 35.00, data: pastDate1, temporada_id: 1 },
+    { id: 'd-3', descricao: 'Taxa de Arbitragem - Rodada 2', categoria: 'Árbitro', valor: 80.00, data: pastDate2, juiz_id: 'j-2', temporada_id: 1 }
+  ];
+
+  state.avisos = [
+    {
+      id: 'av-1',
+      titulo: 'Temporada 2026 Iniciada • Resenha e Disciplina',
+      conteudo: 'Atenção atletas: os jogos de domingo começam rigorosamente às 07h30 na Palestina. O acúmulo de 3 cartões amarelos ou vermelho direto gera suspensão automática para o jogo seguinte!',
+      tipo: 'Regra',
+      data_publicacao: '2026-11-01T10:00:00Z',
+      ativo: true,
+      destaque: true
+    },
+    {
+      id: 'av-2',
+      titulo: 'Contribuição Mensal R$ 25,00',
+      conteudo: 'Lembramos a todos os atletas que o valor padrão da mensalidade é R$ 25,00. Mantenham os pagamentos em dia via Pix ou em mãos com a diretoria para garantir a presença nos jogos.',
+      tipo: 'Financeiro',
+      data_publicacao: '2026-11-05T12:00:00Z',
+      ativo: true,
+      destaque: false
+    }
+  ];
+}
+
+async function loadRemote() {
+  if (!db) return;
+  const tables = ['temporadas', 'times', 'atletas', 'atletas_temporada', 'juizes', 'partidas', 'gols', 'assistencias', 'cartoes', 'presencas', 'mensalidades', 'despesas', 'avisos'];
+  for (const t of tables) {
+    try {
+      const { data, error } = await db.from(t).select('*');
+      if (!error && data) {
+        state[t] = data;
+      }
+    } catch (e) {
+      console.warn(`Erro ao carregar tabela ${t}:`, e);
+    }
   }
 }
 
-
-
-  async function save(table,row,remove=false){
-  if(demo){
-    const arr=state[table];
-
-    if(remove){
-      state[table]=arr.filter(x=>x.id!==row.id);
-    }else{
-      const i=arr.findIndex(x=>x.id===row.id);
-      if(i>=0) arr[i]=row;
+async function saveRecord(table, row, remove = false) {
+  if (demo) {
+    let arr = state[table];
+    if (!arr) state[table] = arr = [];
+    if (remove) {
+      state[table] = arr.filter(x => x.id !== row.id);
+    } else {
+      const i = arr.findIndex(x => x.id === row.id);
+      if (i >= 0) arr[i] = row;
       else arr.push(row);
     }
-
     saveLocal();
     return;
   }
 
-  if(!session) throw new Error('Entre como administrador para fazer alterações.');
+  if (!session && !isAdmin) {
+    throw new Error('Acesso restrito: faça login como administrador.');
+  }
 
-  const {error}=remove
-    ? await db.from(table).delete().eq('id',row.id)
+  const { error } = remove
+    ? await db.from(table).delete().eq('id', row.id)
     : await db.from(table).upsert(row);
 
-  if(error) throw error;
-
+  if (error) throw error;
   await loadRemote();
 }
 
-function notify(msg){const t=$('#toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2800);}
-let isAdmin = false;
-let currentAthlete = null;
-
-async function updateAdminStatus(){
-  if(session && db){
-    const { data, error } = await db.rpc('is_admin');
-    isAdmin = !error && data === true;
-  } else {
-    isAdmin = false;
-  }
-
-  $('#adminStatus').textContent = isAdmin
-    ? 'Sair'
-    : session
-      ? 'Atleta conectado'
-      : 'Entrar →';
-
-  $('#adminButton').firstChild.textContent = isAdmin
-    ? '⚙ Administração'
-    : '⚙ Área administrativa';
+function notify(msg) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 3000);
 }
 
-
-function bindNavigation(){
-  $('#navigation').addEventListener('click',e=>{
-    const b=e.target.closest('[data-page]');
-    if(b) renderPage(b.dataset.page);
-  });
-
-  $('#appContent').addEventListener('click',e=>{
-    const b=e.target.closest('[data-goto]');
-    if(b) renderPage(b.dataset.goto);
-  });
-
-  $('#mobileMenu').onclick=()=>{
-    $('#sidebar').classList.toggle('open');
-  };
-
-  $('#adminButton').onclick=adminAction;
-
-  if($('#athleteButton')){
-    $('#athleteButton').onclick=athleteAction;
-  }
-}
-
-function setTitle(title){$('#pageTitle').textContent=title;document.querySelectorAll('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.page===currentPage));$('#sidebar').classList.remove('open');}
-function renderPage(page){currentPage=page;const titles={inicio:'Visão geral',atletas:'Atletas',times:'Times',partidas:'Partidas',estatisticas:'Estatísticas',financeiro:'Financeiro'};setTitle(titles[page]||'Visão geral');if(page==='inicio')renderHome();else if(page==='atletas')renderAthletes();else if(page==='times')renderTeams();else if(page==='partidas')renderMatches();else if(page==='estatisticas')renderStats();else if(page==='financeiro')renderFinance();}
-function pageHeader(kicker,title,desc,action=''){return `<div class="page-header"><div><div class="eyebrow">${kicker}</div><h1>${title}</h1><p>${desc}</p></div>${action}</div>`;}
-function adminOnly(){if(!demo&&!session){notify('Faça login como administrador.');return false;}if(demo){notify('Modo demonstração: configure o Supabase para proteger a administração.');return false;}return true;}
-
-
-function renderHome(){
- const teams=state.teams||[];
- const teamA=teams[0];
- const teamB=teams[1];
-
- const teamLogo=(t)=>{
-   if(!t) return '';
-   return t.logo_url
-     ? `<img src="${esc(t.logo_url)}" alt="Escudo ${esc(t.name)}">`
-     : `<span>${esc(t.badge||t.name.slice(0,1))}</span>`;
- };
-
- // Próximas partidas agendadas
- const upcomingMatches=[...(state.matches||[])]
-   .filter(m=>m.status==='Agendada' && m.date)
-   .sort((a,b)=>a.date.localeCompare(b.date))
-   .slice(0,3);
-
- // Últimas partidas finalizadas
- const recentResults=[...(state.matches||[])]
-   .filter(m=>m.status==='Finalizada' && m.date)
-   .sort((a,b)=>b.date.localeCompare(a.date))
-   .slice(0,3);
-
- // Monta cada confronto
- const matchCard=(m,finished=false)=>{
-   const a=teams.find(t=>t.id===m.team_a);
-   const b=teams.find(t=>t.id===m.team_b);
-   const scoreA=Number(m.score_a??0);
-   const scoreB=Number(m.score_b??0);
-   const winnerA=finished && scoreA>scoreB;
-   const winnerB=finished && scoreB>scoreA;
-
-   const date=new Date(m.date+'T12:00:00')
-     .toLocaleDateString('pt-BR');
-
-   return `
-     <div class="home-match-card">
-       <div class="home-match-date">
-         ${date}${m.time?' • '+esc(m.time):''}
-       </div>
-
-       <div class="home-match-teams">
-         <div class="home-match-side ${winnerA?'is-winner':''}">
-           <div class="home-match-logo">${teamLogo(a)}</div>
-           <span>${esc(a?.name||'Time A')}</span>
-         </div>
-
-         <div class="home-match-center">
-           <strong>
-             ${finished
-               ? `${scoreA} <small>×</small> ${scoreB}`
-               : 'VS'}
-           </strong>
-           <span>${finished
-             ? scoreA===scoreB?'EMPATE':'FINALIZADA'
-             : 'AGENDADA'}</span>
-         </div>
-
-         <div class="home-match-side ${winnerB?'is-winner':''}">
-           <div class="home-match-logo">${teamLogo(b)}</div>
-           <span>${esc(b?.name||'Time B')}</span>
-         </div>
-       </div>
-     </div>`;
- };
-
- $('#appContent').innerHTML=`
- <section class="hero hero-modern">
-   <div class="hero-copy">
-     <div class="hero-kicker">BABA HUMILDES • PALESTINA - BA</div>
-     <h1>O futebol nos une.<br><em>A resenha nos fortalece.</em></h1>
-     <p>Dois times, uma paixão e uma comunidade que se encontra todo domingo.</p>
-     <div class="hero-actions">
-       <button class="btn btn-gold" data-goto="partidas">Ver partidas <span>↗</span></button>
-       <button class="btn btn-outline" data-goto="atletas">Conhecer atletas</button>
-     </div>
-   </div>
-
-   
- </section>
-
- <section class="home-matchup">
-   <div class="matchup-heading">
-     <span class="eyebrow">NOSSA RIVALIDADE</span>
-     <h2>O grande confronto</h2>
-     <p>Dois lados. Uma só paixão.</p>
-   </div>
-
-   <div class="matchup-teams">
-     <div class="matchup-team">
-       <div class="matchup-logo">${teamLogo(teamA)}</div>
-       <h3>${teamA?esc(teamA.name):'Time A'}</h3>
-       <span>TIME A</span>
-     </div>
-
-     <div class="matchup-vs">VS</div>
-
-     <div class="matchup-team">
-       <div class="matchup-logo">${teamLogo(teamB)}</div>
-       <h3>${teamB?esc(teamB.name):'Time B'}</h3>
-       <span>TIME B</span>
-     </div>
-   </div>
-
-   <button class="text-button" data-goto="times">Conhecer as equipes →</button>
- </section>
-
- <section class="stats-grid">
-   <div class="stat-card">
-     <div class="stat-label">ATLETAS CADASTRADOS</div>
-     <div class="stat-value">${state.athletes.length}</div>
-     <div class="stat-icon">♙</div>
-   </div>
-
-   <div class="stat-card">
-     <div class="stat-label">TIMES</div>
-     <div class="stat-value">${state.teams.length}</div>
-     <div class="stat-icon">⚑</div>
-   </div>
-
-   <div class="stat-card">
-     <div class="stat-label">GOLS REGISTRADOS</div>
-     <div class="stat-value">${state.goals.length}</div>
-     <div class="stat-icon">⚽</div>
-   </div>
-
-   <div class="stat-card">
-     <div class="stat-label">CONTRIBUIÇÃO</div>
-     <div class="stat-value" style="font-size:24px">R$ 25</div>
-     <div class="stat-icon">✦</div>
-   </div>
- </section>
-
- <section class="section-grid">
-   <div class="panel next-match">
-     <div class="panel-heading">
-       <div>
-         <span class="eyebrow">AGENDA</span>
-         <h2>Próximo baba</h2>
-       </div>
-       <span class="tag tag-green">DOMINGO</span>
-     </div>
-     ${nextMatch()}
-   </div>
-
-   <div class="panel contribution">
-     <div class="panel-heading">
-       <div>
-         <span class="eyebrow">NOSSO COMPROMISSO</span>
-         <h2>Todo domingo</h2>
-       </div>
-       <span class="coin-icon">⚽</span>
-     </div>
-     <div class="contribution-value">R$ 25<span>,00</span></div>
-     <p>Contribuição padrão por atleta para manter nosso baba acontecendo.</p>
-   </div>
- </section>
-
- <section class="home-games-section">
-   <div class="home-games-column">
-     <div class="panel-heading">
-       <div>
-         <span class="eyebrow">AGENDA</span>
-         <h2>Próximos jogos</h2>
-       </div>
-       <button class="text-button" data-goto="partidas">Ver todos →</button>
-     </div>
-
-     ${upcomingMatches.length
-       ? upcomingMatches.map(m=>matchCard(m,false)).join('')
-       : '<div class="empty-state compact">Nenhum jogo agendado no momento.</div>'}
-   </div>
-
-   <div class="home-games-column">
-     <div class="panel-heading">
-       <div>
-         <span class="eyebrow">HISTÓRICO</span>
-         <h2>Últimos resultados</h2>
-       </div>
-       <button class="text-button" data-goto="partidas">Ver todos →</button>
-     </div>
-
-     ${recentResults.length
-       ? recentResults.map(m=>matchCard(m,true)).join('')
-       : '<div class="empty-state compact">Ainda não temos resultados registrados.</div>'}
-   </div>
- </section>
-
- <section class="section-grid lower-grid">
-   <div class="panel">
-     <div class="panel-heading">
-       <div>
-         <span class="eyebrow">DESTAQUE</span>
-         <h2>Artilharia</h2>
-       </div>
-       <button class="text-button" data-goto="estatisticas">Ver ranking →</button>
-     </div>
-     ${scorerList(5)}
-   </div>
-
-   <div class="panel">
-     <div class="panel-heading">
-       <div>
-         <span class="eyebrow">NOSSO GRUPO</span>
-         <h2>Times</h2>
-       </div>
-       <button class="text-button" data-goto="times">Ver times →</button>
-     </div>
-     ${teamPreview()}
-   </div>
- </section>
-
- <footer>
-   © ${new Date().getFullYear()} BABA HUMILDES · Palestina, Salvador - BA
-   <span>Feito para a resenha continuar.</span>
- </footer>`;
-}
-
-
-
-function nextMatch(){
-  const m=[...(state.matches||[])]
-    .filter(x=>x.date)
-    .sort((a,b)=>a.date.localeCompare(b.date))[0];
-
-  if(!m){
-    return `<div class="empty-state compact">
-      Nenhuma partida cadastrada ainda.<br>
-      <small>O administrador poderá adicionar o próximo confronto.</small>
-    </div>`;
-  }
-
-  const a=state.teams.find(t=>t.id===m.team_a);
-  const b=state.teams.find(t=>t.id===m.team_b);
-
-  const teamLogo=(t)=>{
-    if(!t) return '<span>?</span>';
-
-    return t.logo_url
-      ? `<img src="${esc(t.logo_url)}" alt="Escudo ${esc(t.name)}">`
-      : `<span>${esc(t.badge||t.name.slice(0,1))}</span>`;
-  };
-
-  return `
-    <div class="home-match-teams next-match-teams">
-
-      <div class="home-match-side">
-        <div class="home-match-logo">
-          ${teamLogo(a)}
-        </div>
-        <span>${esc(a?.name||'Time A')}</span>
-        <small>MANDANTE</small>
-      </div>
-
-      <div class="home-match-center">
-        <strong>×</strong>
-      </div>
-
-      <div class="home-match-side">
-        <div class="home-match-logo">
-          ${teamLogo(b)}
-        </div>
-        <span>${esc(b?.name||'Time B')}</span>
-        <small>VISITANTE</small>
-      </div>
-
-    </div>
-
-    <div class="eyebrow" style="text-align:center;margin-top:16px">
-      ${new Date(m.date+'T12:00:00').toLocaleDateString('pt-BR')}
-      ${m.time?' • '+esc(m.time):''}
-    </div>
-  `;
-}
-
-function scorerCounts(){const counts={};state.goals.forEach(g=>counts[g.athlete_id]=(counts[g.athlete_id]||0)+1);return Object.entries(counts).map(([athlete_id,goals])=>({athlete:state.athletes.find(a=>a.id===athlete_id),goals})).filter(x=>x.athlete).sort((a,b)=>b.goals-a.goals);}
-function scorerList(limit=20){const rows=scorerCounts().slice(0,limit);return rows.length?`<div class="list-wrap">${rows.map((r,i)=>`<div class="rank-row"><span class="rank-number">${String(i+1).padStart(2,'0')}</span><span class="rank-name">${esc(r.athlete.name)}</span><span class="rank-meta">${r.goals} gol(s)</span></div>`).join('')}</div>`:`<div class="empty-state">A artilharia aparecerá aqui quando os gols forem registrados.</div>`;}
-
-function teamPreview(){
- return `<div class="team-preview">
-   ${state.teams.map(t=>`
-     <div class="team-mini">
-       <div class="team-badge">
-         ${t.logo_url
-           ? `<img src="${esc(t.logo_url)}" alt="Escudo ${esc(t.name)}">`
-           : esc(t.badge||t.name.slice(0,1))}
-       </div>
-       <b>${esc(t.name)}</b>
-       <small>${state.athletes.filter(a=>a.team_id===t.id).length} atletas</small>
-     </div>
-   `).join('')}
- </div>`;
-}
-
-
-function renderAthletes(){
-  const action = session
-    ? '<button class="btn-primary" id="addAthlete">+ Cadastrar atleta</button>'
-    : '';
-
-  $('#appContent').innerHTML =
-    pageHeader('ELENCO','Atletas','Jogadores separados por equipe.',action) +
-    `
-      <div class="filter-row">
-        <input id="athleteSearch" placeholder="Buscar atleta pelo nome...">
-      </div>
-
-      <div id="athleteGroups"></div>
-    `;
-
-  drawAthletes();
-
-  $('#athleteSearch').oninput = drawAthletes;
-
-  if(session){
-    $('#addAthlete').onclick = () => athleteForm();
-  }
-}
-
-
-function drawAthletes(){
-  const q = ($('#athleteSearch')?.value || '').toLowerCase();
-
-  const teams = [...state.teams];
-
-  const groups = teams.map(team => {
-    const athletes = state.athletes.filter(a =>
-      a.team_id === team.id &&
-      (a.name || '').toLowerCase().includes(q)
-    );
-
-    return { team, athletes };
-  });
-
-  const withoutTeam = state.athletes.filter(a =>
-    !teams.some(t => t.id === a.team_id) &&
-    (a.name || '').toLowerCase().includes(q)
-  );
-
-  const renderRows = athletes => {
-    if(!athletes.length){
-      return `
-        <tr>
-          <td colspan="${session ? 6 : 5}" class="empty-table">
-            Nenhum atleta nesta equipe.
-          </td>
-        </tr>
-      `;
-    }
-
-    return athletes.map(a => `
-      <tr>
-        <td><b>${esc(a.name)}</b></td>
-        <td>${esc(state.teams.find(t => t.id === a.team_id)?.name || '—')}</td>
-        <td>${esc(a.position || 'Não informada')}</td>
-        <td>${state.goals.filter(g => g.athlete_id === a.id).length}</td>
-        <td>
-          <small>
-            ${a.created_at ? new Date(a.created_at).toLocaleDateString('pt-BR') : '—'}
-          </small>
-        </td>
-        ${session ? `
-          <td class="row-actions">
-            <button data-edit-athlete="${a.id}">Editar</button>
-            ·
-            <button data-delete-athlete="${a.id}">Excluir</button>
-          </td>
-        ` : ''}
-      </tr>
-    `).join('');
-  };
-
-  const renderGroup = (team, athletes) => `
-    <div class="panel" style="margin-bottom:24px;">
-      <div class="panel-heading" style="display:flex;align-items:center;gap:14px;padding:18px;">
-        ${
-          team.logo_url
-            ? `<img src="${esc(team.logo_url)}" alt="Escudo ${esc(team.name)}" style="width:55px;height:55px;object-fit:contain;">`
-            : ''
+// ------------------------------------------------------------------------------
+// 2. REGRAS DE NEGÓCIO E ALGORITMOS (SEÇÃO 4 DO SUMÁRIO)
+// ------------------------------------------------------------------------------
+
+/**
+ * 4.2 Motor de Disciplina e Suspensões
+ * - 3 amarelos acumulados = 1 suspensão automática
+ * - Vermelho direto = 1 suspensão automática
+ * - 2 amarelos na mesma partida = vermelho automático
+ * - Ao cumprir em partida finalizada SEM presença, zera os 3 amarelos da punição
+ */
+function calculateDisciplinaryStatus(athleteId) {
+  const sortedMatches = [...state.matches].sort((a, b) => new Date(a.data) - new Date(b.data));
+  let accumulatedYellows = 0;
+  let hasPendingSuspension = false;
+  let suspensionReason = '';
+  let suspensionsServed = 0;
+
+  for (const match of sortedMatches) {
+    if (hasPendingSuspension) {
+      if (match.status === 'Finalizada') {
+        const attendance = state.presencas.find(p => p.match_id === match.id && p.atleta_id === athleteId);
+        const wasPresent = attendance && attendance.confirmado;
+        if (!wasPresent) {
+          // Suspensão cumprida! Limpa a punição e abate 3 amarelos
+          hasPendingSuspension = false;
+          suspensionsServed++;
+          accumulatedYellows = Math.max(0, accumulatedYellows - 3);
+          suspensionReason = '';
+        } else {
+          // Jogou suspenso irregularmente: punição permanece ativa
+          suspensionReason = 'Jogou irregularmente: suspensão continua ativa para o próximo jogo!';
         }
-        <div>
-          <h2>${esc(team.name)}</h2>
-          <span>${athletes.length} atleta(s)</span>
-        </div>
-      </div>
-
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>ATLETA</th>
-              <th>TIME</th>
-              <th>POSIÇÃO</th>
-              <th>GOLS</th>
-              <th>CADASTRO</th>
-              ${session ? '<th>AÇÕES</th>' : ''}
-            </tr>
-          </thead>
-          <tbody>
-            ${renderRows(athletes)}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  `;
-
-  $('#athleteGroups').innerHTML =
-    groups.map(group =>
-      renderGroup(group.team, group.athletes)
-    ).join('') +
-    (withoutTeam.length ? renderGroup(
-      { name: 'Sem time definido', logo_url: null },
-      withoutTeam
-    ) : '');
-
-  $('#athleteGroups').querySelectorAll('[data-edit-athlete]').forEach(b =>
-    b.onclick = () =>
-      athleteForm(state.athletes.find(a => a.id === b.dataset.editAthlete))
-  );
-
-  $('#athleteGroups').querySelectorAll('[data-delete-athlete]').forEach(b =>
-    b.onclick = () => deleteAthlete(b.dataset.deleteAthlete)
-  );
-}
-
-function athleteForm(a={}){showEdit(`<h2>${a.id?'Editar atleta':'Novo atleta'}</h2><p>Preencha os dados do jogador.</p><form id="athleteForm"><div class="field"><label>Nome completo *</label><input name="name" required value="${esc(a.name||'')}" placeholder="Nome do atleta"></div><div class="form-grid"><div class="field"><label>Posição</label><select name="position"><option value="">Selecione</option>${['Goleiro','Zagueiro','Lateral','Meio-campo','Atacante'].map(x=>`<option ${a.position===x?'selected':''}>${x}</option>`).join('')}</select></div><div class="field"><label>Número da camisa</label><input name="number" type="number" min="0" value="${esc(a.number??'')}"></div><div class="field full"><label>Time</label><select name="team_id"><option value="">Sem time definido</option>${state.teams.map(t=>`<option value="${t.id}" ${a.team_id===t.id?'selected':''}>${esc(t.name)}</option>`).join('')}</select></div></div><div class="modal-actions"><button type="button" class="btn-secondary" data-close>Cancelar</button><button class="btn-primary">Salvar atleta</button></div></form>`);$('#athleteForm').onsubmit=async e=>{e.preventDefault();const f=new FormData(e.target);try{await save('athletes',{...a,id:a.id||id(),name:f.get('name').trim(),position:f.get('position'),number:f.get('number')||null,team_id:f.get('team_id')||null,created_at:a.created_at||new Date().toISOString()});$('#editDialog').close();notify('Atleta salvo!');renderPage('atletas');}catch(err){notify(err.message);}};}
-async function deleteAthlete(aid){if(!confirm('Excluir este atleta?'))return;try{await save('athletes',{id:aid},true);notify('Atleta excluído.');renderPage('atletas');}catch(e){notify(e.message);}}
-
-function renderTeams(){
-  const action=session?'<button class="btn-primary" id="addTeam">+ Novo time</button>':'';
-
-  $('#appContent').innerHTML=pageHeader('EQUIPES','Nossos times','Dois lados, uma só paixão.',action)+
-  `<div class="cards-grid">${state.teams.map(t=>`
-    <div class="team-card">
-      <div class="team-badge">
-        ${t.logo_url
-          ? `<img src="${esc(t.logo_url)}" alt="Escudo ${esc(t.name)}" style="width:100%;height:100%;object-fit:contain">`
-          : esc(t.badge||t.name.slice(0,1))}
-      </div>
-      <div>
-        <h3>${esc(t.name)}</h3>
-        <p>${state.athletes.filter(a=>a.team_id===t.id).length} atletas no elenco</p>
-        ${session?`<button class="text-button" data-edit-team="${t.id}">Editar time →</button>`:''}
-      </div>
-    </div>`).join('')}</div>`;
-
-  if(session)$('#addTeam').onclick=()=>teamForm();
-  $('#appContent').querySelectorAll('[data-edit-team]').forEach(b=>
-    b.onclick=()=>teamForm(state.teams.find(t=>t.id===b.dataset.editTeam))
-  );
-}
-
-
-function teamForm(t={}){
-  showEdit(`
-    <h2>${t.id?'Editar time':'Novo time'}</h2>
-    <p>Personalize o nome e a identificação do escudo.</p>
-
-    <form id="teamForm">
-      <div class="field">
-        <label>Nome do time *</label>
-        <input name="name" required value="${esc(t.name||'')}">
-      </div>
-
-      <div class="form-grid">
-        <div class="field">
-          <label>Sigla / escudo</label>
-          <input name="badge" maxlength="3" value="${esc(t.badge||'')}">
-        </div>
-
-        <div class="field">
-          <label>Cor</label>
-          <input name="color" type="color" value="${esc(t.color||'#75a88a')}" style="height:39px;padding:4px">
-        </div>
-      </div>
-
-      <div class="field">
-        <label>Imagem do escudo</label>
-        <input name="logo" type="file" accept="image/png,image/jpeg,image/webp">
-        <small>Formatos PNG, JPG ou WEBP. Máximo de 3 MB.</small>
-      </div>
-
-      <div class="modal-actions">
-        <button type="button" class="btn-secondary" data-close>Cancelar</button>
-        <button class="btn-primary">Salvar time</button>
-      </div>
-    </form>
-  `);
-
-  $('#teamForm').onsubmit=async e=>{
-    e.preventDefault();
-
-    const f=new FormData(e.target);
-    const file=f.get('logo');
-    const teamId=t.id||id();
-
-    try{
-      let logoUrl=t.logo_url||null;
-
-      if(file && file.size>0){
-        if(!['image/png','image/jpeg','image/webp'].includes(file.type)){
-          throw new Error('Escolha uma imagem PNG, JPG ou WEBP.');
-        }
-
-        if(file.size>3*1024*1024){
-          throw new Error('A imagem deve ter no máximo 3 MB.');
-        }
-
-        const ext={
-          'image/png':'png',
-          'image/jpeg':'jpg',
-          'image/webp':'webp'
-        }[file.type];
-
-        const path=`${teamId}.${ext}`;
-
-        const {error:uploadError}=await db.storage
-          .from('escudos')
-          .upload(path,file,{
-            upsert:true,
-            contentType:file.type
-          });
-
-        if(uploadError) throw uploadError;
-
-        const {data:urlData}=db.storage
-          .from('escudos')
-          .getPublicUrl(path);
-
-        logoUrl=urlData.publicUrl;
       }
-
-      await save('teams',{
-        ...t,
-        id:teamId,
-        name:f.get('name').trim(),
-        badge:f.get('badge')||f.get('name').slice(0,1).toUpperCase(),
-        color:f.get('color'),
-        logo_url:logoUrl
-      });
-
-      $('#editDialog').close();
-      notify('Time salvo!');
-      renderPage('times');
-
-    }catch(err){
-      notify(err.message);
     }
+
+    // Processa os cartões da partida
+    const matchCards = state.cards.filter(c => c.match_id === match.id && c.atleta_id === athleteId);
+    let yellowInMatch = 0;
+
+    for (const card of matchCards) {
+      if (card.type === 'Amarelo') {
+        yellowInMatch++;
+        accumulatedYellows++;
+        if (yellowInMatch === 2) {
+          // 2º amarelo no mesmo jogo = vermelho automático
+          hasPendingSuspension = true;
+          suspensionReason = 'Suspenso: 2 Cartões Amarelos na mesma partida (Vermelho automático)';
+        } else if (accumulatedYellows >= 3) {
+          hasPendingSuspension = true;
+          suspensionReason = 'Suspenso: Acúmulo de 3 Cartões Amarelos';
+        }
+      } else if (card.type === 'Vermelho') {
+        hasPendingSuspension = true;
+        suspensionReason = 'Suspenso: Cartão Vermelho Direto';
+      }
+    }
+  }
+
+  const totalYellows = state.cards.filter(c => c.atleta_id === athleteId && c.type === 'Amarelo').length;
+  const totalReds = state.cards.filter(c => c.atleta_id === athleteId && c.type === 'Vermelho').length;
+
+  return {
+    athleteId,
+    isSuspended: hasPendingSuspension,
+    reason: suspensionReason,
+    accumulatedYellows,
+    totalYellows,
+    totalReds,
+    suspensionsServed
   };
 }
 
-
-function renderMatches(){
-  const action=session
-    ? '<button class="btn-primary" id="addMatch">+ Nova partida</button>'
-    : '';
-
-  $('#appContent').innerHTML=
-    pageHeader('CAMPO','Partidas','Agenda, placares e eventos dos confrontos.',action)+
-    `<div class="list-wrap" id="matchList"></div>`;
-
-  const list=$('#matchList');
-
-  if(!state.matches.length){
-    list.innerHTML='<div class="empty-state">Nenhuma partida cadastrada.</div>';
-  } else {
-    list.innerHTML=[...state.matches]
-      .sort((a,b)=>(b.date||'').localeCompare(a.date||''))
-      .map(m=>{
-        const a=state.teams.find(t=>t.id===m.team_a);
-        const b=state.teams.find(t=>t.id===m.team_b);
-
-        const teamLogo=t=>{
-          if(!t) return '<span>?</span>';
-
-          return t.logo_url
-            ? `<img src="${esc(t.logo_url)}" alt="Escudo ${esc(t.name)}">`
-            : `<span>${esc(t.badge||t.name?.slice(0,1)||'?')}</span>`;
-        };
-
-        return `
-          <div class="panel">
-            <div class="panel-heading">
-              <div>
-                <span class="eyebrow">
-                  ${m.date?new Date(m.date+'T12:00:00').toLocaleDateString('pt-BR'):'Data não definida'}
-                  ${m.time?' • '+esc(m.time):''}
-                </span>
-                <h2>${esc(m.status||'Agendada')}</h2>
-              </div>
-
-              ${session?`<button class="text-button" data-events="${m.id}">Registrar evento +</button>`:''}
-            </div>
-
-            <div class="home-match-teams">
-              <div class="home-match-side">
-                <div class="home-match-logo">
-                  ${teamLogo(a)}
-                </div>
-                <span>${esc(a?.name||'Time A')}</span>
-              </div>
-
-              <div class="home-match-center">
-                <strong>${m.score_a??0} <small>×</small> ${m.score_b??0}</strong>
-                <span>PLACAR</span>
-              </div>
-
-              <div class="home-match-side">
-                <div class="home-match-logo">
-                  ${teamLogo(b)}
-                </div>
-                <span>${esc(b?.name||'Time B')}</span>
-              </div>
-            </div>
-
-            ${session?`
-              <div class="row-actions" style="text-align:right">
-                <button data-edit-match="${m.id}">Editar partida</button>
-              </div>
-            `:''}
-          </div>
-        `;
-      }).join('');
+/**
+ * 4.3 Inadimplência e Bloqueio de Presença
+ * - Carência: 1 mês e 10 dias de tolerância
+ * - Diretoria: Isenta de mensalidade
+ */
+function checkInadimplencia(athleteId) {
+  const athlete = state.athletes.find(a => a.id === athleteId);
+  if (!athlete) return { isInadimplente: false, pendingMonths: [], totalDue: 0 };
+  if (athlete.is_diretoria) {
+    return { isInadimplente: false, pendingMonths: [], totalDue: 0, isDiretoria: true };
   }
 
-  if(session){
-    $('#addMatch').onclick=()=>matchForm();
+  const now = new Date();
+  // Tolerância de 1 mês e 10 dias
+  const toleranceDate = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate() - 10);
+  const thresholdMonth = toleranceDate.getMonth() + 1; // 1 a 12
+
+  const activeSeason = getActiveTemporada();
+  const dues = state.mensalidades.filter(m => m.atleta_id === athleteId && (!m.temporada_id || m.temporada_id === activeSeason.id));
+  const pendingMonths = [];
+  let totalDue = 0;
+
+  for (const due of dues) {
+    if (!due.pago && due.mes <= thresholdMonth) {
+      pendingMonths.push(due.mes);
+      totalDue += Number(due.valor || activeSeason.valor_mensalidade_padrao || 25);
+    }
   }
 
-  list.querySelectorAll('[data-edit-match]').forEach(b=>
-    b.onclick=()=>matchForm(state.matches.find(m=>m.id===b.dataset.editMatch))
-  );
-
-  list.querySelectorAll('[data-events]').forEach(b=>
-    b.onclick=()=>eventForm(b.dataset.events)
-  );
+  return {
+    isInadimplente: pendingMonths.length > 0,
+    pendingMonths,
+    totalDue,
+    thresholdMonth
+  };
 }
 
-function matchForm(m={}){showEdit(`<h2>${m.id?'Editar partida':'Nova partida'}</h2><form id="matchForm"><div class="form-grid"><div class="field"><label>Time A</label><select name="team_a">${state.teams.map(t=>`<option value="${t.id}" ${m.team_a===t.id?'selected':''}>${esc(t.name)}</option>`).join('')}</select></div><div class="field"><label>Time B</label><select name="team_b">${state.teams.map(t=>`<option value="${t.id}" ${m.team_b===t.id?'selected':''}>${esc(t.name)}</option>`).join('')}</select></div><div class="field"><label>Data</label><input type="date" name="date" required value="${esc(m.date||'')}"></div><div class="field"><label>Horário</label><input type="time" name="time" value="${esc(m.time||'')}"></div><div class="field"><label>Gols Time A</label><input type="number" min="0" name="score_a" value="${m.score_a??0}"></div><div class="field"><label>Gols Time B</label><input type="number" min="0" name="score_b" value="${m.score_b??0}"></div><div class="field full"><label>Status</label><select name="status"><option ${m.status==='Agendada'?'selected':''}>Agendada</option><option ${m.status==='Finalizada'?'selected':''}>Finalizada</option><option ${m.status==='Cancelada'?'selected':''}>Cancelada</option></select></div></div><div class="modal-actions"><button type="button" class="btn-secondary" data-close>Cancelar</button><button class="btn-primary">Salvar partida</button></div></form>`);$('#matchForm').onsubmit=async e=>{e.preventDefault();const f=new FormData(e.target);if(f.get('team_a')===f.get('team_b'))return notify('Escolha dois times diferentes.');try{await save('matches',{...m,id:m.id||id(),team_a:f.get('team_a'),team_b:f.get('team_b'),date:f.get('date'),time:f.get('time'),score_a:+f.get('score_a'),score_b:+f.get('score_b'),status:f.get('status'),created_at:m.created_at||new Date().toISOString()});$('#editDialog').close();notify('Partida salva!');renderPage('partidas');}catch(err){notify(err.message);}};}
-function eventForm(matchId){const m=state.matches.find(x=>x.id===matchId);showEdit(`<h2>Registrar evento</h2><p>Adicione gol ou cartão à partida.</p><div class="notice">A pontuação da partida deve ser mantida coerente com os gols registrados. Nesta versão, o placar é editado na partida.</div><div class="form-grid"><button class="btn-secondary" id="addGoal">⚽ Registrar gol</button><button class="btn-secondary" id="addCard">▰ Registrar cartão</button></div>`);$('#addGoal').onclick=()=>eventFormFields('goal',matchId);$('#addCard').onclick=()=>eventFormFields('card',matchId);}
-function eventFormFields(type,matchId){const isGoal=type==='goal';showEdit(`<h2>${isGoal?'Registrar gol':'Registrar cartão'}</h2><form id="eventForm"><div class="field"><label>Atleta</label><select name="athlete_id" required>${state.athletes.map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select></div><div class="field"><label>Time</label><select name="team_id">${state.teams.map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select></div>${isGoal?'<div class="field"><label>Minuto</label><input type="number" name="minute" min="1" max="150" placeholder="Ex.: 32"></div>':'<div class="field"><label>Tipo de cartão</label><select name="type"><option value="yellow">Amarelo</option><option value="red">Vermelho</option></select></div>'}<div class="modal-actions"><button type="button" class="btn-secondary" data-close>Cancelar</button><button class="btn-primary">Registrar</button></div></form>`);$('#eventForm').onsubmit=async e=>{e.preventDefault();const f=new FormData(e.target);const table=isGoal?'goals':'cards';const row={id:id(),match_id:matchId,athlete_id:f.get('athlete_id'),team_id:f.get('team_id'),...(isGoal?{minute:f.get('minute')||null}:{type:f.get('type')}),created_at:new Date().toISOString()};try{await save(table,row);$('#editDialog').close();notify(isGoal?'Gol registrado!':'Cartão registrado!');renderPage('partidas');}catch(err){notify(err.message);}};}
+/**
+ * 4.4 Classificação e Pontuação dos Times
+ * Apenas partidas Finalizadas.
+ * Ordem: Pontos DESC, Vitórias DESC, Saldo de Gols DESC, Gols Pró DESC.
+ */
+function calculateStandings() {
+  const activeSeason = getActiveTemporada();
+  const seasonTeams = state.teams.filter(t => !t.temporada_id || t.temporada_id === activeSeason.id);
+  const table = seasonTeams.map(t => ({
+    team: t,
+    jogos: 0,
+    vitorias: 0,
+    empates: 0,
+    derrotas: 0,
+    golsPro: 0,
+    golsContra: 0,
+    saldoGols: 0,
+    pontos: 0
+  }));
 
-function renderStats(){
-  const finished = state.matches
-    .filter(m => m.status === 'Finalizada')
-    .sort((a,b) => (b.date || '').localeCompare(a.date || ''));
+  const finishedMatches = state.matches.filter(m => m.status === 'Finalizada' && (!m.temporada_id || m.temporada_id === activeSeason.id));
 
-  const totalGoals = finished.reduce(
-    (sum,m) => sum + Number(m.score_a || 0) + Number(m.score_b || 0),
-    0
-  );
+  for (const m of finishedMatches) {
+    const tA = table.find(x => x.team.id === m.time_a);
+    const tB = table.find(x => x.team.id === m.time_b);
+    if (!tA || !tB) continue;
 
-  const yellows = state.cards.filter(c => c.type === 'yellow').length;
-  const reds = state.cards.filter(c => c.type === 'red').length;
+    tA.jogos++;
+    tB.jogos++;
+    tA.golsPro += m.placar_a;
+    tA.golsContra += m.placar_b;
+    tB.golsPro += m.placar_b;
+    tB.golsContra += m.placar_a;
 
-  const standings = state.teams.map(team => {
-    const stats = {
-      team,
-      played: 0,
-      wins: 0,
-      draws: 0,
-      losses: 0,
-      goalsFor: 0,
-      goalsAgainst: 0,
-      points: 0
+    if (m.placar_a > m.placar_b) {
+      tA.vitorias++;
+      tA.pontos += 3;
+      tB.derrotas++;
+    } else if (m.placar_b > m.placar_a) {
+      tB.vitorias++;
+      tB.pontos += 3;
+      tA.derrotas++;
+    } else {
+      tA.empates++;
+      tA.pontos += 1;
+      tB.empates++;
+      tB.pontos += 1;
+    }
+  }
+
+  for (const row of table) {
+    row.saldoGols = row.golsPro - row.golsContra;
+  }
+
+  table.sort((a, b) => {
+    if (b.pontos !== a.pontos) return b.pontos - a.pontos;
+    if (b.vitorias !== a.vitorias) return b.vitorias - a.vitorias;
+    if (b.saldoGols !== a.saldoGols) return b.saldoGols - a.saldoGols;
+    return b.golsPro - a.golsPro;
+  });
+
+  return table;
+}
+
+/**
+ * 4.5 Cálculo Dinâmico de Placar da Súmula
+ */
+function recalculateMatchScore(matchId) {
+  const match = state.matches.find(m => m.id === matchId);
+  if (!match) return;
+
+  const matchGoals = state.goals.filter(g => g.match_id === matchId);
+  let scoreA = 0;
+  let scoreB = 0;
+
+  for (const goal of matchGoals) {
+    let teamId = goal.team_id;
+    if (!teamId) {
+      const athlete = state.athletes.find(a => a.id === goal.athlete_id);
+      teamId = athlete ? athlete.team_id : null;
+    }
+    if (teamId === match.time_a) scoreA += (goal.quantidade || 1);
+    else if (teamId === match.time_b) scoreB += (goal.quantidade || 1);
+  }
+
+  match.placar_a = scoreA;
+  match.placar_b = scoreB;
+  saveLocal();
+}
+
+// ------------------------------------------------------------------------------
+// 3. NAVEGAÇÃO E CONTROLE DE TELAS
+// ------------------------------------------------------------------------------
+
+function bindNavigation() {
+  $$('#navigation .nav-item').forEach(btn => {
+    btn.onclick = () => renderPage(btn.dataset.page);
+  });
+
+  if ($('#adminButton')) {
+    $('#adminButton').onclick = () => {
+      if (isAdmin || session) {
+        showAdminControlPanel();
+      } else {
+        showLogin();
+      }
     };
+  }
 
-    finished.forEach(match => {
-      let ownGoals;
-      let opponentGoals;
+  if ($('#athleteButton')) {
+    $('#athleteButton').onclick = showAthleteSelector;
+  }
 
-      if(match.team_a === team.id){
-        ownGoals = Number(match.score_a || 0);
-        opponentGoals = Number(match.score_b || 0);
-      }else if(match.team_b === team.id){
-        ownGoals = Number(match.score_b || 0);
-        opponentGoals = Number(match.score_a || 0);
-      }else{
-        return;
-      }
+  if ($('#mobileMenu')) {
+    $('#mobileMenu').onclick = () => {
+      $('#sidebar').classList.toggle('open');
+    };
+  }
 
-      stats.played++;
-      stats.goalsFor += ownGoals;
-      stats.goalsAgainst += opponentGoals;
-
-      if(ownGoals > opponentGoals){
-        stats.wins++;
-        stats.points += 3;
-      }else if(ownGoals === opponentGoals){
-        stats.draws++;
-        stats.points++;
-      }else{
-        stats.losses++;
-      }
-    });
-
-    stats.goalDifference = stats.goalsFor - stats.goalsAgainst;
-    stats.performance = stats.played
-      ? Math.round((stats.points / (stats.played * 3)) * 100)
-      : 0;
-
-    return stats;
+  document.addEventListener('click', e => {
+    const goto = e.target.closest('[data-goto]');
+    if (goto) {
+      renderPage(goto.dataset.goto);
+    }
+    const closeBtn = e.target.closest('[data-close]');
+    if (closeBtn) {
+      const dialog = closeBtn.closest('dialog');
+      if (dialog) dialog.close();
+    }
   });
+}
 
-  standings.sort((a,b) =>
-    b.points - a.points ||
-    b.goalDifference - a.goalDifference ||
-    b.goalsFor - a.goalsFor
-  );
+function setTitle(title) {
+  if ($('#pageTitle')) $('#pageTitle').textContent = title;
+  $$('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.page === currentPage));
+  if ($('#sidebar')) $('#sidebar').classList.remove('open');
+}
 
-  const scorers = scorerCounts();
+function renderPage(page) {
+  currentPage = page;
+  const titles = {
+    inicio: 'Visão geral',
+    atletas: 'Atletas & Elenco',
+    times: 'Times & Tabela de Classificação',
+    partidas: 'Partidas & Súmula Digital',
+    estatisticas: 'Estatísticas & Disciplina',
+    financeiro: 'Financeiro & Transparência',
+    avisos: 'Avisos Oficiais',
+    juizes: 'Quadro de Árbitros',
+    atleta: 'Área do Atleta'
+  };
+  setTitle(titles[page] || 'Visão geral');
 
-  const goalMax = Math.max(
-    1,
-    ...standings.map(s => s.goalsFor),
-    ...standings.map(s => s.goalsAgainst)
-  );
+  switch (page) {
+    case 'inicio': renderHome(); break;
+    case 'atletas': renderAthletes(); break;
+    case 'times': renderTeams(); break;
+    case 'partidas': renderMatches(); break;
+    case 'estatisticas': renderStats(); break;
+    case 'financeiro': renderFinance(); break;
+    case 'avisos': renderAvisos(); break;
+    case 'juizes': renderJuizes(); break;
+    default: renderHome(); break;
+  }
+}
 
-  const safeColor = color =>
-    /^#[0-9a-f]{3,8}$/i.test(color || '')
-      ? color
-      : '#75a88a';
+function updateAdminStatus() {
+  const el = $('#adminStatus');
+  if (!el) return;
+  if (isAdmin || session) {
+    el.innerHTML = '<span style="color:#81bd91;">● Painel Admin →</span>';
+  } else {
+    el.textContent = 'Entrar →';
+  }
+}
 
-  const rankingRows = standings.length
-    ? standings.map((s,i) => `
-        <div class="rank-row">
-          <span class="rank-meta">${i + 1}º</span>
-          <span class="rank-name">${esc(s.team.name)}</span>
-          <b>${s.points} pts</b>
+// ------------------------------------------------------------------------------
+// 4. MÓDULOS DE RENDERIZAÇÃO
+// ------------------------------------------------------------------------------
+
+/**
+ * 4.1 VISÃO GERAL (renderHome)
+ */
+function renderHome() {
+  const activeSeason = getActiveTemporada();
+  const nextMatchData = getNextMatch();
+  const standings = calculateStandings();
+  const topScorers = getTopScorers(4);
+  const topAssists = getTopAssists(4);
+  const featuredNotice = state.avisos.find(a => a.ativo && a.destaque) || state.avisos.find(a => a.ativo);
+
+  const totalAthletes = state.athletes.length;
+  const finishedMatchesCount = state.matches.filter(m => m.status === 'Finalizada').length;
+  const totalGoals = state.goals.reduce((acc, g) => acc + (g.quantidade || 1), 0);
+  const avgGoals = finishedMatchesCount ? (totalGoals / finishedMatchesCount).toFixed(1) : '0.0';
+
+  const totalPaid = state.mensalidades.filter(m => m.pago).reduce((acc, m) => acc + Number(m.valor || 25), 0);
+  const totalExpenses = state.despesas.reduce((acc, d) => acc + Number(d.valor || 0), 0);
+  const balance = totalPaid - totalExpenses;
+
+  $('#appContent').innerHTML = `
+    <section class="hero">
+      <div class="hero-copy">
+        <div class="hero-kicker">⚽ BABA HUMILDES • TEMPORADA ${activeSeason.ano}</div>
+        <h1>O futebol nos une.<br><em>A resenha nos fortalece.</em></h1>
+        <p>Portal esportivo oficial do baba de domingo da Palestina, Salvador - BA. Gestão completa de elenco, pontuação, disciplina e transparência financeira.</p>
+        <div class="hero-actions">
+          <button class="btn btn-gold" data-goto="partidas">Ver súmula do próximo jogo <span>↗</span></button>
+          <button class="btn btn-outline" data-goto="atletas">Conhecer o elenco</button>
         </div>
-      `).join('')
-    : '<div class="empty-state">Nenhum time cadastrado.</div>';
+      </div>
+      <div class="hero-watermark">HUMILDES</div>
+    </section>
 
-  const standingsRows = standings.length
-    ? standings.map((s,i) => `
-        <tr>
-          <td><b>${i + 1}º ${esc(s.team.name)}</b></td>
-          <td>${s.played}</td>
-          <td>${s.wins}</td>
-          <td>${s.draws}</td>
-          <td>${s.losses}</td>
-          <td>${s.goalsFor}</td>
-          <td>${s.goalsAgainst}</td>
-          <td>${s.goalDifference > 0 ? '+' : ''}${s.goalDifference}</td>
-          <td><b>${s.points}</b></td>
-          <td>${s.performance}%</td>
-        </tr>
-      `).join('')
-    : '<tr><td colspan="10">Nenhum time cadastrado.</td></tr>';
-
-  const performanceRows = standings.length
-    ? standings.map(s => `
-        <div class="rank-row" style="display:block;padding:14px 0">
-          <div style="display:flex;justify-content:space-between;gap:12px;margin-bottom:8px">
-            <b>${esc(s.team.name)}</b>
-            <b>${s.performance}%</b>
-          </div>
-          <div style="height:9px;background:var(--border,#e5e5e5);border-radius:20px;overflow:hidden">
-            <div style="height:100%;width:${s.performance}%;background:${safeColor(s.team.color)};border-radius:20px"></div>
-          </div>
-          <div class="rank-meta" style="margin-top:7px">
-            ${s.wins} vitórias · ${s.draws} empates · ${s.losses} derrotas
+    ${featuredNotice ? `
+      <div class="featured-home-notice">
+        <div style="display:flex; align-items:center; gap:12px;">
+          <span class="pin">📌</span>
+          <div>
+            <div style="font-size:10px; color:var(--gold); font-weight:700; letter-spacing:1px;">COMUNICADO OFICIAL • ${esc(featuredNotice.tipo.toUpperCase())}</div>
+            <div style="font:700 16px var(--display); color:#fff;">${esc(featuredNotice.titulo)}</div>
+            <div style="font-size:11px; color:#c5d5cb; margin-top:3px;">${esc(featuredNotice.conteudo.slice(0, 140))}${featuredNotice.conteudo.length > 140 ? '...' : ''}</div>
           </div>
         </div>
-      `).join('')
-    : '<div class="empty-state">Nenhum time cadastrado.</div>';
+        <button class="btn btn-secondary" data-goto="avisos" style="flex-shrink:0;">Mural de avisos →</button>
+      </div>
+    ` : ''}
 
-  const goalRows = standings.length
-    ? standings.map(s => `
-        <div class="rank-row" style="display:block;padding:14px 0">
-          <b>${esc(s.team.name)}</b>
-
-          <div style="display:flex;justify-content:space-between;margin:9px 0 5px">
-            <span class="rank-meta">Gols marcados</span>
-            <b>${s.goalsFor}</b>
-          </div>
-          <div style="height:8px;background:var(--border,#e5e5e5);border-radius:20px;overflow:hidden">
-            <div style="height:100%;width:${(s.goalsFor / goalMax) * 100}%;background:${safeColor(s.team.color)}"></div>
-          </div>
-
-          <div style="display:flex;justify-content:space-between;margin:9px 0 5px">
-            <span class="rank-meta">Gols sofridos</span>
-            <b>${s.goalsAgainst}</b>
-          </div>
-          <div style="height:8px;background:var(--border,#e5e5e5);border-radius:20px;overflow:hidden">
-            <div style="height:100%;width:${(s.goalsAgainst / goalMax) * 100}%;background:#c77b72"></div>
-          </div>
-        </div>
-      `).join('')
-    : '<div class="empty-state">Nenhum time cadastrado.</div>';
-
-  const recentMatches = finished.length
-    ? finished.slice(0,6).map(m => {
-        const teamA = state.teams.find(t => t.id === m.team_a);
-        const teamB = state.teams.find(t => t.id === m.team_b);
-
-        return `
-          <div class="rank-row">
-            <span class="rank-name">
-              ${esc(teamA?.name || 'Time A')}
-            </span>
-            <b>${Number(m.score_a || 0)} x ${Number(m.score_b || 0)}</b>
-            <span class="rank-name">
-              ${esc(teamB?.name || 'Time B')}
-            </span>
-          </div>
-          <div class="rank-meta" style="padding:0 0 10px">
-            ${m.date ? new Date(m.date + 'T12:00:00').toLocaleDateString('pt-BR') : ''}
-          </div>
-        `;
-      }).join('')
-    : '<div class="empty-state">Nenhuma partida finalizada ainda.</div>';
-
-  const discipline = state.cards.length
-    ? state.cards.map(c => `
-        <div class="rank-row">
-          <span>${c.type === 'red' ? '🟥' : '🟨'}</span>
-          <span class="rank-name">
-            ${esc(state.athletes.find(a => a.id === c.athlete_id)?.name || 'Atleta')}
-          </span>
-          <span class="rank-meta">
-            ${c.type === 'red' ? 'Vermelho' : 'Amarelo'}
-          </span>
-        </div>
-      `).join('')
-    : '<div class="empty-state">Nenhum cartão registrado.</div>';
-
-  $('#appContent').innerHTML =
-    pageHeader(
-      'DESEMPENHO',
-      'Estatísticas',
-      'Números, classificação e destaques do BABA HUMILDES.'
-    ) +
-
-    `
     <section class="stats-grid">
       <div class="stat-card">
-        <div class="stat-label">PARTIDAS</div>
-        <div class="stat-value">${finished.length}</div>
-        <div class="stat-icon">◷</div>
+        <div class="stat-label">ELENCO DA TEMPORADA</div>
+        <div class="stat-value">${totalAthletes} <small style="font-size:12px; color:var(--muted);">atletas</small></div>
+        <div class="stat-icon">👥</div>
       </div>
-
       <div class="stat-card">
-        <div class="stat-label">GOLS MARCADOS</div>
-        <div class="stat-value">${totalGoals}</div>
+        <div class="stat-label">JOGOS REALIZADOS</div>
+        <div class="stat-value">${finishedMatchesCount} <small style="font-size:12px; color:var(--muted);">rodadas</small></div>
+        <div class="stat-icon">⏱</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">GOLS NA TEMPORADA</div>
+        <div class="stat-value">${totalGoals} <small style="font-size:12px; color:var(--muted); font-weight:400;">(${avgGoals}/jogo)</small></div>
         <div class="stat-icon">⚽</div>
       </div>
-
       <div class="stat-card">
-        <div class="stat-label">CARTÕES AMARELOS</div>
-        <div class="stat-value">${yellows}</div>
-        <div class="stat-icon">🟨</div>
-      </div>
-
-      <div class="stat-card">
-        <div class="stat-label">CARTÕES VERMELHOS</div>
-        <div class="stat-value">${reds}</div>
-        <div class="stat-icon">🟥</div>
+        <div class="stat-label">CAIXA DO BABA</div>
+        <div class="stat-value" style="color:${balance >= 0 ? 'var(--gold)' : '#dc7772'};">${money(balance)}</div>
+        <div class="stat-icon">＄</div>
       </div>
     </section>
 
-    <div class="panel" style="margin-bottom:20px">
-      <div class="panel-heading">
-        <div>
-          <span class="eyebrow">CAMPEONATO</span>
-          <h2>Classificação</h2>
+    <section class="section-grid">
+      <div class="panel next-match">
+        <div class="panel-heading">
+          <div><span class="eyebrow">AGENDA DO DOMINGO</span><h2>Próximo baba</h2></div>
+          <span class="tag tag-green">${nextMatchData ? esc(nextMatchData.tipo.toUpperCase()) : 'DOMINGO'}</span>
         </div>
+        ${renderNextMatchCard(nextMatchData)}
       </div>
 
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>TIME</th>
-              <th>J</th>
-              <th>V</th>
-              <th>E</th>
-              <th>D</th>
-              <th>GP</th>
-              <th>GC</th>
-              <th>SG</th>
-              <th>PTS</th>
-              <th>APR.</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${standingsRows}
-          </tbody>
-        </table>
+      <div class="panel contribution">
+        <div class="panel-heading">
+          <div><span class="eyebrow">CONTRIBUIÇÃO DA TEMPORADA</span><h2>Mensalidade</h2></div>
+          <span class="coin-icon">R$</span>
+        </div>
+        <div class="contribution-value">${money(activeSeason.valor_mensalidade_padrao)}<span>/mês</span></div>
+        <p>Contribuição mensal por atleta (isenção para membros da diretoria). Tolerância de carência de <strong>1 mês e 10 dias</strong> antes do bloqueio de presença.</p>
+        <button class="text-button" data-goto="financeiro">Prestação de contas e pagamentos →</button>
       </div>
+    </section>
 
-      <div class="rank-meta" style="padding:12px">
-        Vitória: 3 pontos · Empate: 1 ponto · Derrota: 0 pontos
-      </div>
-    </div>
-
-    <div class="section-grid">
+    <section class="section-grid lower-grid">
       <div class="panel">
         <div class="panel-heading">
+          <div><span class="eyebrow">RANKINGS</span><h2>Artilharia & Garçons</h2></div>
+          <button class="text-button" data-goto="estatisticas">Ver todos →</button>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
           <div>
-            <span class="eyebrow">DESEMPENHO</span>
-            <h2>Aproveitamento</h2>
+            <div style="font-size:10px; font-weight:700; color:var(--gold); margin-bottom:8px;">⚽ ARTILHEIROS</div>
+            ${topScorers.length ? topScorers.map((s, i) => `
+              <div class="rank-row">
+                <span class="rank-number">${String(i+1).padStart(2,'0')}</span>
+                <span class="rank-name">${esc(s.athlete.apelido)}</span>
+                <span class="rank-meta">${s.goals} gol(s)</span>
+              </div>
+            `).join('') : '<div class="empty-state compact">Sem gols registrados ainda.</div>'}
+          </div>
+          <div>
+            <div style="font-size:10px; font-weight:700; color:var(--gold); margin-bottom:8px;">🎯 ASSISTÊNCIAS</div>
+            ${topAssists.length ? topAssists.map((s, i) => `
+              <div class="rank-row">
+                <span class="rank-number">${String(i+1).padStart(2,'0')}</span>
+                <span class="rank-name">${esc(s.athlete.apelido)}</span>
+                <span class="rank-meta">${s.assists} assist.</span>
+              </div>
+            `).join('') : '<div class="empty-state compact">Sem assistências registradas.</div>'}
           </div>
         </div>
-        ${performanceRows}
-      </div>
-
-      <div class="panel">
-        <div class="panel-heading">
-          <div>
-            <span class="eyebrow">ATAQUE E DEFESA</span>
-            <h2>Gols dos times</h2>
-          </div>
-        </div>
-        ${goalRows}
-      </div>
-    </div>
-
-    <div class="section-grid" style="margin-top:20px">
-      <div class="panel">
-        <div class="panel-heading">
-          <div>
-            <span class="eyebrow">RANKING</span>
-            <h2>Artilheiros</h2>
-          </div>
-        </div>
-        ${scorerList(50)}
       </div>
 
       <div class="panel">
         <div class="panel-heading">
-          <div>
-            <span class="eyebrow">RESULTADOS</span>
-            <h2>Últimas partidas</h2>
-          </div>
+          <div><span class="eyebrow">CAMPEONATO</span><h2>Classificação dos Times</h2></div>
+          <button class="text-button" data-goto="times">Tabela completa →</button>
         </div>
-        ${recentMatches}
-      </div>
-    </div>
-
-    <div class="panel" style="margin-top:20px">
-      <div class="panel-heading">
-        <div>
-          <span class="eyebrow">DISCIPLINA</span>
-          <h2>Cartões</h2>
-        </div>
-      </div>
-      ${discipline}
-    </div>
-    `;
-}
-
-
-
-
-function renderFinance(selectedCompetence = '', searchTerm = ''){
-  const monthlyFee = 25;
-
-  const now = new Date();
-  const currentMonth =
-    now.getFullYear() + '-' +
-    String(now.getMonth() + 1).padStart(2, '0');
-
-  const competences = [...new Set([
-    '2027-01',
-    ...state.payments
-      .map(p => p.competence)
-      .filter(Boolean),
-    ...(currentMonth >= '2027-01' ? [currentMonth] : [])
-  ])].sort((a,b) => b.localeCompare(a));
-
-  const competence = competences.includes(selectedCompetence)
-    ? selectedCompetence
-    : (competences.includes(currentMonth) ? currentMonth : '2027-01');
-
-  const paymentsOfMonth = state.payments.filter(
-    p => p.competence === competence
-  );
-
-  const paid = paymentsOfMonth.filter(p => p.status === 'paid');
-
-  const pendingPayments = paymentsOfMonth.filter(
-    p => p.status !== 'paid'
-  );
-
-  const paidTotal = paid.reduce(
-    (sum,p) => sum + Number(p.amount || 0), 0
-  );
-
-  const pendingTotal = pendingPayments.reduce(
-    (sum,p) => sum + Number(p.amount || 0), 0
-  );
-
-  const expectedTotal = state.athletes.length * monthlyFee;
-
-  const paidCount = paid.length;
-
-  const awaitingCount = state.athletes.filter(a =>
-    !paymentsOfMonth.some(p => p.athlete_id === a.id)
-  ).length;
-
-  const percentage = state.athletes.length
-    ? Math.round((paidCount / state.athletes.length) * 100)
-    : 0;
-
-  const monthLabel = competence.split('-').reverse().join('/');
-
-  const action = session
-    ? '<button class="btn-primary" id="addPayment">+ Registrar pagamento</button>'
-    : '';
-
-  const athleteRows = state.athletes.map(a => {
-    const payment = paymentsOfMonth.find(
-      p => p.athlete_id === a.id
-    );
-
-    const name = a.name || 'Atleta';
-    const dueDate = payment?.due_date || competence + '-10';
-
-    const formattedDate = new Date(
-      dueDate + 'T12:00:00'
-    ).toLocaleDateString('pt-BR');
-
-    let statusLabel;
-    let statusClass;
-
-    if(payment){
-      statusLabel = payment.status === 'paid'
-        ? 'Pago'
-        : 'Pendente';
-
-      statusClass = payment.status === 'paid'
-        ? ''
-        : 'pending';
-    }else if(competence > currentMonth){
-      statusLabel = 'Aguardando cobrança';
-      statusClass = 'pending';
-    }else{
-      statusLabel = 'Cobrança não gerada';
-      statusClass = 'pending';
-    }
-
-    return {
-      athlete: a,
-      payment,
-      name,
-      dueDate: formattedDate,
-      statusLabel,
-      statusClass
-    };
-  });
-
-  // Organiza os atletas por time.
-  const teamGroups = state.teams.map(team => ({
-    team,
-    rows: athleteRows.filter(
-      item => item.athlete.team_id === team.id
-    )
-  }));
-
-  // Não deixa atletas sem time desaparecerem.
-  const unassignedRows = athleteRows.filter(item =>
-    !state.teams.some(team => team.id === item.athlete.team_id)
-  );
-
-  if(unassignedRows.length){
-    teamGroups.push({
-      team: {
-        id: 'no-team',
-        name: 'Sem time',
-        color: '#888888',
-        badge: '?'
-      },
-      rows: unassignedRows
-    });
-  }
-
-  const renderTeamBlock = group => {
-    const team = group.team;
-    const rows = group.rows;
-
-    const teamColor = /^#[0-9a-f]{3,8}$/i.test(team.color || '')
-      ? team.color
-      : 'var(--primary,#75a88a)';
-
-    const teamPaid = rows.filter(
-      item => item.payment?.status === 'paid'
-    );
-
-    const teamPending = rows.filter(
-      item => item.payment && item.payment.status !== 'paid'
-    );
-
-    const teamAwaiting = rows.filter(
-      item => !item.payment
-    );
-
-    const teamPaidTotal = teamPaid.reduce(
-      (sum,item) => sum + Number(item.payment.amount || 0), 0
-    );
-
-    const teamPendingTotal = teamPending.reduce(
-      (sum,item) => sum + Number(item.payment.amount || 0), 0
-    );
-
-    const teamRowsHTML = rows.length
-      ? rows.map(item => `
-          <tr data-finance-row>
-            <td><b>${esc(item.name)}</b></td>
-            <td>${money(item.payment?.amount ?? monthlyFee)}</td>
-            <td>${item.dueDate}</td>
-            <td>
-              <span class="pill ${item.statusClass}">
-                ${item.statusLabel}
-              </span>
-            </td>
-
-            ${session ? `
-              <td>
-                ${item.payment ? `
-                  <button class="btn-secondary"
-                    data-edit-payment="${item.payment.id}">
-                    Editar
-                  </button>
-
-                  <button class="btn-secondary"
-                    data-delete-payment="${item.payment.id}">
-                    Excluir
-                  </button>
-                ` : '<span class="rank-meta">—</span>'}
-              </td>
-            ` : ''}
-          </tr>
-        `).join('')
-      : `
-          <tr>
-            <td colspan="${session ? 5 : 4}" class="empty-table">
-              Nenhum atleta cadastrado neste time.
-            </td>
-          </tr>
-        `;
-
-    return `
-      <div class="panel finance-team-block"
-        data-finance-team
-        style="border-top:4px solid ${teamColor};min-width:0">
-
-        <div class="panel-heading">
-          <div>
-            <span class="eyebrow">EQUIPE</span>
-            <h2 style="color:${teamColor}">
-              ${esc(team.name)}
-            </h2>
-            <div class="rank-meta">
-              ${rows.length} atleta(s)
-            </div>
-          </div>
-
-          <div class="team-badge"
-            style="background:${teamColor};color:#fff;width:44px;height:44px">
-            ${team.logo_url
-              ? `<img src="${esc(team.logo_url)}"
-                  alt="Escudo ${esc(team.name)}"
-                  style="width:100%;height:100%;object-fit:contain">`
-              : esc(team.badge || team.name.slice(0,1))}
-          </div>
-        </div>
-
-        <div class="stats-grid" style="margin:15px 0">
-          <div class="stat-card">
-            <div class="stat-label">RECEBIDO</div>
-            <div class="stat-value" style="font-size:19px">
-              ${money(teamPaidTotal)}
-            </div>
-          </div>
-
-          <div class="stat-card">
-            <div class="stat-label">PENDENTE</div>
-            <div class="stat-value" style="font-size:19px">
-              ${money(teamPendingTotal)}
-            </div>
-          </div>
-        </div>
-
-        <div class="rank-meta" style="margin-bottom:14px">
-          ${teamPaid.length} pagos ·
-          ${teamPending.length} pendentes ·
-          ${teamAwaiting.length} aguardando cobrança
-        </div>
-
         <div class="table-wrap">
-          <table>
+          <table class="standings-table">
             <thead>
               <tr>
-                <th>ATLETA</th>
-                <th>VALOR</th>
-                <th>VENCIMENTO</th>
-                <th>STATUS</th>
-                ${session ? '<th>AÇÕES</th>' : ''}
+                <th>Time</th>
+                <th>Pts</th>
+                <th>J</th>
+                <th>V</th>
+                <th>SG</th>
               </tr>
             </thead>
             <tbody>
-              ${teamRowsHTML}
+              ${standings.map((row, idx) => `
+                <tr>
+                  <td>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                      <span class="standings-pos">${idx + 1}º</span>
+                      <strong>${esc(row.team.nome)}</strong>
+                    </div>
+                  </td>
+                  <td class="standings-pts">${row.pontos}</td>
+                  <td>${row.jogos}</td>
+                  <td>${row.vitorias}</td>
+                  <td style="color:${row.saldoGols > 0 ? '#8ce4a6' : row.saldoGols < 0 ? '#f78d88' : 'inherit'}; font-weight:600;">
+                    ${row.saldoGols > 0 ? '+' : ''}${row.saldoGols}
+                  </td>
+                </tr>
+              `).join('')}
             </tbody>
           </table>
         </div>
       </div>
-    `;
+    </section>
+  `;
+}
+
+function getNextMatch() {
+  const nowStr = new Date().toISOString().split('T')[0];
+  const upcoming = state.matches
+    .filter(m => m.status === 'Agendada' && m.data >= nowStr)
+    .sort((a, b) => new Date(a.data) - new Date(b.data));
+  return upcoming[0] || state.matches.find(m => m.status === 'Agendada');
+}
+
+function renderNextMatchCard(match) {
+  if (!match) {
+    return `<div class="empty-state compact">Nenhuma partida agendada no momento.<br><small>A administração agendará a próxima rodada.</small></div>`;
+  }
+
+  const teamA = state.teams.find(t => t.id === match.time_a) || { nome: 'Time A', cor: '#75a88a' };
+  const teamB = state.teams.find(t => t.id === match.time_b) || { nome: 'Time B', cor: '#d5b46a' };
+  const juiz = state.juizes.find(j => j.id === match.juiz_id);
+  const confirmedPlayers = state.presencas.filter(p => p.match_id === match.id && p.confirmado);
+
+  const formattedDate = new Date(match.data + 'T12:00:00Z').toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' });
+
+  return `
+    <div style="padding:10px 0;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+        <span style="font-size:12px; color:var(--gold); font-weight:700;">📅 ${formattedDate} • ${match.hora || '07:30'}</span>
+        ${juiz ? `<span class="badge-tag info">⚖ Árbitro: ${esc(juiz.nome)}</span>` : ''}
+      </div>
+
+      <div style="display:flex; align-items:center; justify-content:space-around; background:#0f1a14; padding:18px; border-radius:10px; border:1px solid var(--line); margin-bottom:15px;">
+        <div style="text-align:center;">
+          <strong style="font:800 22px var(--display); color:${teamA.cor};">${esc(teamA.nome)}</strong>
+        </div>
+        <div style="font:800 26px var(--display); color:var(--muted);">VS</div>
+        <div style="text-align:center;">
+          <strong style="font:800 22px var(--display); color:${teamB.cor};">${esc(teamB.nome)}</strong>
+        </div>
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div style="font-size:11px; color:var(--muted);">
+          ⚽ <strong>${confirmedPlayers.length}</strong> atleta(s) confirmados para este jogo.
+        </div>
+        <button class="btn btn-gold" onclick="openPublicAttendanceModal('${match.id}')">
+          Confirmar minha presença →
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function getTopScorers(limit = 10) {
+  const counts = {};
+  for (const g of state.goals) {
+    counts[g.athlete_id] = (counts[g.athlete_id] || 0) + (g.quantidade || 1);
+  }
+  return Object.entries(counts)
+    .map(([aid, goals]) => ({ athlete: state.athletes.find(a => a.id === aid), goals }))
+    .filter(x => x.athlete)
+    .sort((a, b) => b.goals - a.goals)
+    .slice(0, limit);
+}
+
+function getTopAssists(limit = 10) {
+  const counts = {};
+  for (const as of state.assistencias) {
+    counts[as.athlete_id] = (counts[as.athlete_id] || 0) + (as.quantidade || 1);
+  }
+  return Object.entries(counts)
+    .map(([aid, assists]) => ({ athlete: state.athletes.find(a => a.id === aid), assists }))
+    .filter(x => x.athlete)
+    .sort((a, b) => b.assists - a.assists)
+    .slice(0, limit);
+}
+
+/**
+ * 4.2 ATLETAS & ELENCO (renderAthletes)
+ */
+function renderAthletes() {
+  const activeSeason = getActiveTemporada();
+  let filter = 'todos';
+  let searchTerm = '';
+
+  function draw() {
+    let list = state.athletes.filter(a => {
+      const matchSearch = (a.apelido || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          (a.nome_completo || '').toLowerCase().includes(searchTerm.toLowerCase());
+      if (!matchSearch) return false;
+      if (filter === 'team-a') return a.team_id === 'team-a';
+      if (filter === 'team-b') return a.team_id === 'team-b';
+      if (filter === 'diretoria') return a.is_diretoria;
+      return true;
+    });
+
+    const athletesHtml = list.length ? list.map(a => {
+      const team = state.teams.find(t => t.id === a.team_id);
+      const disc = calculateDisciplinaryStatus(a.id);
+      const fin = checkInadimplencia(a.id);
+
+      return `
+        <div class="team-card" style="position:relative; flex-direction:column; align-items:flex-start; gap:10px;">
+          <div style="display:flex; width:100%; justify-content:space-between; align-items:flex-start;">
+            <div style="display:flex; align-items:center; gap:12px;">
+              <div class="avatar" style="width:48px; height:48px; font:800 20px var(--display); color:var(--gold); border:1px solid var(--line);">
+                ${a.foto_url ? `<img src="${a.foto_url}" alt="${esc(a.apelido)}">` : esc(a.apelido.charAt(0))}
+              </div>
+              <div>
+                <h3 style="margin:0;">${esc(a.apelido)}</h3>
+                <small style="color:var(--muted);">${a.posicao || 'Posição indefinida'} ${a.numero_camisa ? `• Camisa #${a.numero_camisa}` : ''}</small>
+              </div>
+            </div>
+            ${team ? `<span class="badge-tag" style="background:${team.cor}22; color:${team.cor}; border:1px solid ${team.cor}66;">${esc(team.nome)}</span>` : '<span class="badge-tag">Sem time</span>'}
+          </div>
+
+          <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:4px;">
+            ${a.is_diretoria ? `<span class="badge-tag gold">★ DIRETORIA</span>` : ''}
+            ${disc.isSuspended ? `<span class="badge-tag danger">🔴 SUSPENSO: ${esc(disc.reason)}</span>` : `<span class="badge-tag success">🟢 APTO PARA O BABA</span>`}
+            ${fin.isInadimplente ? `<span class="badge-tag warning">⚠️ MENSALIDADE PENDENTE</span>` : ''}
+          </div>
+
+          <div style="display:flex; justify-content:space-between; width:100%; margin-top:8px; padding-top:8px; border-top:1px solid var(--line); font-size:11px; color:var(--muted);">
+            <div>Cartões: 🟨 ${disc.totalYellows} | 🟥 ${disc.totalReds}</div>
+            ${isAdmin ? `
+              <div class="row-actions">
+                <button onclick="editAthleteModal('${a.id}')">Editar</button> •
+                <button onclick="deleteAthleteAction('${a.id}')" style="color:#e57373;">Excluir</button>
+              </div>
+            ` : ''}
+          </div>
+        </div>
+      `;
+    }).join('') : `<div class="empty-state full" style="grid-column:1/-1;">Nenhum atleta encontrado com estes filtros.</div>`;
+
+    $('#athletesList').innerHTML = athletesHtml;
+  }
+
+  $('#appContent').innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="eyebrow">TEMPORADA ${activeSeason.ano}</div>
+        <h1>Atletas & Elenco Oficial</h1>
+        <p>Catálogo de atletas, vínculos com os times, membros da diretoria e status disciplinar para o próximo jogo.</p>
+      </div>
+      ${isAdmin ? `<button class="btn btn-gold" id="btnNewAthlete">+ Novo Atleta</button>` : ''}
+    </div>
+
+    <div class="subtabs" id="athletesSubtabs">
+      <button class="tab-btn active" data-filter="todos">Todos (${state.athletes.length})</button>
+      <button class="tab-btn" data-filter="team-a">Time A</button>
+      <button class="tab-btn" data-filter="team-b">Time B</button>
+      <button class="tab-btn" data-filter="diretoria">Diretoria (Isentos)</button>
+    </div>
+
+    <div class="filter-row">
+      <input type="search" id="athleteSearch" placeholder="Buscar atleta por apelido ou nome..." />
+    </div>
+
+    <div class="cards-grid" id="athletesList"></div>
+  `;
+
+  $('#athleteSearch').oninput = e => {
+    searchTerm = e.target.value;
+    draw();
   };
 
-  const teamBlocksHTML = teamGroups.length
-    ? teamGroups.map(renderTeamBlock).join('')
-    : '<div class="notice">Nenhum time ou atleta cadastrado.</div>';
+  $$('#athletesSubtabs .tab-btn').forEach(btn => {
+    btn.onclick = () => {
+      $$('#athletesSubtabs .tab-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      filter = btn.dataset.filter;
+      draw();
+    };
+  });
 
-  $('#appContent').innerHTML =
-    pageHeader(
-      'CONTRIBUIÇÕES',
-      'Financeiro',
-      'Controle e transparência das mensalidades.',
-      action
-    ) +
+  if ($('#btnNewAthlete')) {
+    $('#btnNewAthlete').onclick = () => editAthleteModal();
+  }
 
-    `
-    <section class="stats-grid">
+  draw();
+}
 
-      <div class="stat-card">
-        <div class="stat-label">TOTAL RECEBIDO</div>
-        <div class="stat-value" style="font-size:24px">
-          ${money(paidTotal)}
-        </div>
-        <div class="stat-icon">💰</div>
-      </div>
-
-      <div class="stat-card">
-        <div class="stat-label">EM ABERTO</div>
-        <div class="stat-value" style="font-size:24px">
-          ${money(pendingTotal)}
-        </div>
-        <div class="stat-icon">◷</div>
-      </div>
-
-      <div class="stat-card">
-        <div class="stat-label">TOTAL PREVISTO</div>
-        <div class="stat-value" style="font-size:24px">
-          ${money(expectedTotal)}
-        </div>
-        <div class="stat-icon">📊</div>
-      </div>
-
-      <div class="stat-card">
-        <div class="stat-label">ATLETAS EM DIA</div>
-        <div class="stat-value">${paidCount}</div>
-        <div class="stat-icon">✓</div>
-      </div>
-
-    </section>
-
-    <div class="panel" style="margin-bottom:20px">
-      <div class="panel-heading">
-        <div>
-          <span class="eyebrow">ACOMPANHAMENTO</span>
-          <h2>Arrecadação de ${monthLabel}</h2>
-        </div>
-        <b>${percentage}%</b>
-      </div>
-
-      <div style="height:12px;background:var(--border,#e5e5e5);border-radius:20px;overflow:hidden">
-        <div style="height:100%;width:${percentage}%;background:var(--primary,#75a88a);border-radius:20px"></div>
-      </div>
-
-      <div class="rank-meta" style="margin-top:12px">
-        ${paidCount} pagos ·
-        ${pendingPayments.length} pendentes ·
-        ${awaitingCount} aguardando cobrança
-      </div>
-    </div>
-
-    <div class="notice">
-      Mensalidade de R$ 25,00 por atleta, com vencimento todo dia 10.
-      Primeira cobrança em janeiro de 2027.
-      Todos os atletas aparecem na consulta financeira.
-    </div>
-
-    <div class="panel" style="margin-bottom:20px">
-      <div class="panel-heading">
-        <div>
-          <span class="eyebrow">CONSULTA</span>
-          <h2>Mensalidades por time</h2>
-        </div>
-      </div>
-
-      <div class="form-grid" style="margin-bottom:18px">
-
+function editAthleteModal(athleteId = '') {
+  const a = athleteId ? state.athletes.find(x => x.id === athleteId) : {};
+  showEdit(`
+    <h2>${a.id ? 'Editar Atleta' : 'Novo Atleta do Baba'}</h2>
+    <p>Preencha a ficha cadastral do atleta para a temporada ativa.</p>
+    <form id="athleteForm">
+      <div class="form-grid">
         <div class="field">
-          <label>Competência</label>
-          <select id="financeCompetence">
-            ${competences.map(c => `
-              <option value="${c}" ${c === competence ? 'selected' : ''}>
-                ${c.split('-').reverse().join('/')}
-              </option>
+          <label>Apelido no Baba (Público) *</label>
+          <input name="apelido" required value="${esc(a.apelido || '')}" placeholder="Ex: Deivide">
+        </div>
+        <div class="field">
+          <label>Nome Completo (Restrito à Diretoria)</label>
+          <input name="nome_completo" value="${esc(a.nome_completo || '')}" placeholder="Ex: Deivide Silva">
+        </div>
+        <div class="field">
+          <label>Telefone / WhatsApp (Restrito)</label>
+          <input name="telefone" value="${esc(a.telefone || '')}" placeholder="Ex: (71) 98888-7777">
+        </div>
+        <div class="field">
+          <label>Posição Principal</label>
+          <select name="posicao">
+            <option value="">Selecione</option>
+            ${['Goleiro', 'Zagueiro', 'Lateral', 'Meio-campo', 'Volante', 'Atacante'].map(p => `
+              <option ${a.posicao === p ? 'selected' : ''}>${p}</option>
             `).join('')}
           </select>
         </div>
-
         <div class="field">
-          <label>Buscar atleta</label>
-          <input
-            type="search"
-            id="financeSearch"
-            placeholder="Digite o nome do atleta..."
-            value="${esc(searchTerm)}"
-          >
+          <label>Número da Camisa</label>
+          <input type="number" name="numero_camisa" min="1" max="99" value="${a.numero_camisa || ''}">
         </div>
-
-      </div>
-    </div>
-
-    <div style="
-      display:grid;
-      grid-template-columns:repeat(auto-fit,minmax(min(100%,480px),1fr));
-      gap:20px;
-      align-items:start;
-    ">
-      ${teamBlocksHTML}
-    </div>
-    `;
-
-  const competenceSelect = document.querySelector('#financeCompetence');
-  const searchInput = document.querySelector('#financeSearch');
-
-  competenceSelect.onchange = () => {
-    renderFinance(competenceSelect.value, searchInput.value);
-  };
-
-  const applyFinanceSearch = () => {
-    const term = searchInput.value.trim().toLowerCase();
-
-    document.querySelectorAll('[data-finance-team]').forEach(teamBlock => {
-      const rows = teamBlock.querySelectorAll('[data-finance-row]');
-      let visibleRows = 0;
-
-      rows.forEach(row => {
-        const matches = row.textContent.toLowerCase().includes(term);
-        row.style.display = matches ? '' : 'none';
-
-        if(matches) visibleRows++;
-      });
-
-      teamBlock.style.display =
-        term && visibleRows === 0 ? 'none' : '';
-    });
-  };
-
-  searchInput.oninput = applyFinanceSearch;
-  applyFinanceSearch();
-
-  if(session){
-    $('#addPayment').onclick = () => paymentForm();
-
-    document.querySelectorAll('[data-edit-payment]').forEach(button => {
-      button.onclick = () => paymentForm(button.dataset.editPayment);
-    });
-
-    document.querySelectorAll('[data-delete-payment]').forEach(button => {
-      button.onclick = async () => {
-        const paymentId = button.dataset.deletePayment;
-
-        const confirmed = confirm(
-          'Tem certeza que deseja excluir esta mensalidade? Essa ação não poderá ser desfeita.'
-        );
-
-        if(!confirmed) return;
-
-        try {
-          await save('payments', {id: paymentId}, true);
-          notify('Mensalidade excluída com sucesso!');
-          renderPage('financeiro');
-        } catch(err) {
-          notify(err.message);
-        }
-      };
-    });
-  }
-}
-
-
-
-
-
-
-function paymentForm(paymentId = ''){
-  const existing = paymentId
-    ? state.payments.find(p => p.id === paymentId)
-    : null;
-
-  if(paymentId && !existing){
-    notify('Pagamento não encontrado.');
-    return;
-  }
-
-  const editing = Boolean(existing);
-
-  const athleteOptions = state.athletes.map(a => `
-    <option value="${a.id}"
-      ${existing?.athlete_id === a.id ? 'selected' : ''}>
-      ${esc(a.name)}
-    </option>
-  `).join('');
-
-  showEdit(`
-    <h2>${editing ? 'Editar pagamento' : 'Registrar pagamento'}</h2>
-    <p>${editing
-      ? 'Corrija o valor ou o status da mensalidade.'
-      : 'Confirme ou atualize a mensalidade do atleta.'
-    }</p>
-
-    <form id="paymentForm">
-      <div class="field">
-        <label>Atleta</label>
-        <select name="athlete_id" required ${editing ? 'disabled' : ''}>
-          ${athleteOptions}
-        </select>
-      </div>
-
-      <div class="form-grid">
         <div class="field">
-          <label>Competência</label>
-          <input type="month" name="competence"
-            value="${existing?.competence || '2027-01'}"
-            min="2027-01" required ${editing ? 'disabled' : ''}>
-        </div>
-
-        <div class="field">
-          <label>Valor (R$)</label>
-          <input type="number" name="amount"
-            step="0.01" min="0.01"
-            value="${existing?.amount ?? 25}" required>
-        </div>
-
-        ${!editing ? `
-          <div class="field">
-            <label>Forma</label>
-            <select name="method">
-              <option>Pix</option>
-              <option>Dinheiro</option>
-              <option>Transferência</option>
-              <option>Outro</option>
-            </select>
-          </div>
-        ` : ''}
-
-        <div class="field">
-          <label>Status</label>
-          <select name="status">
-            <option value="paid"
-              ${existing?.status === 'paid' ? 'selected' : ''}>
-              Pago
-            </option>
-            <option value="pending"
-              ${existing?.status !== 'paid' ? 'selected' : ''}>
-              Pendente
-            </option>
+          <label>Time Vinculado</label>
+          <select name="team_id">
+            <option value="">Sem time definido</option>
+            ${state.teams.map(t => `<option value="${t.id}" ${a.team_id === t.id ? 'selected' : ''}>${esc(t.nome)}</option>`).join('')}
           </select>
         </div>
+        <div class="field full">
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+            <input type="checkbox" name="is_diretoria" ${a.is_diretoria ? 'checked' : ''} style="width:auto;">
+            <span>Membro da Diretoria (Isento de cobrança de mensalidade)</span>
+          </label>
+        </div>
       </div>
-
       <div class="modal-actions">
-        <button type="button" class="btn-secondary" data-close>
-          Cancelar
-        </button>
-        <button class="btn-primary">
-          ${editing ? 'Salvar alterações' : 'Salvar pagamento'}
-        </button>
+        <button type="button" class="btn-secondary" data-close>Cancelar</button>
+        <button class="btn-primary" type="submit">Salvar Atleta</button>
       </div>
     </form>
   `);
 
-  $('#paymentForm').onsubmit = async e => {
+  $('#athleteForm').onsubmit = async e => {
     e.preventDefault();
-
     const f = new FormData(e.target);
-    const athleteId = editing
-      ? existing.athlete_id
-      : f.get('athlete_id');
-
-    const competence = editing
-      ? existing.competence
-      : f.get('competence');
-
-    const status = f.get('status');
-
-    const duplicate = !editing && state.payments.some(p =>
-      p.athlete_id === athleteId &&
-      p.competence === competence
-    );
-
-    if(duplicate){
-      notify('Já existe uma mensalidade para esse atleta e competência.');
-      return;
-    }
-
-    const payment = {
-      id: editing ? existing.id : id(),
-      athlete_id: athleteId,
-      amount: Number(f.get('amount')),
-      status,
-      paid_at: status === 'paid'
-        ? new Date().toISOString()
-        : null,
-      competence,
-      due_date: competence + '-10'
+    const athleteData = {
+      id: a.id || id(),
+      apelido: f.get('apelido').trim(),
+      nome_completo: f.get('nome_completo') ? f.get('nome_completo').trim() : null,
+      telefone: f.get('telefone') ? f.get('telefone').trim() : null,
+      posicao: f.get('posicao') || null,
+      numero_camisa: f.get('numero_camisa') ? Number(f.get('numero_camisa')) : null,
+      team_id: f.get('team_id') || null,
+      is_diretoria: f.get('is_diretoria') === 'on'
     };
 
-    if(!editing){
-      payment.reference = 'Mensalidade do baba';
-      payment.method = f.get('method');
-      payment.created_at = new Date().toISOString();
-    }
-
     try {
-      await save('payments', payment);
-
+      await saveRecord('athletes', athleteData);
       $('#editDialog').close();
-      notify(editing
-        ? 'Pagamento atualizado com sucesso!'
-        : 'Mensalidade salva com sucesso!'
-      );
-      renderPage('financeiro');
-
-    } catch(err) {
+      notify('Atleta salvo com sucesso!');
+      renderPage('atletas');
+    } catch (err) {
       notify(err.message);
     }
   };
 }
 
-
-function showEdit(html){$('#editDialogBody').innerHTML=html;$('#editDialog').showModal();$('#editDialogBody').querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>$('#editDialog').close());}
-
-async function adminAction(){
-  if(demo){
-    showAdminSetup();
-    return;
+async function deleteAthleteAction(aid) {
+  if (!confirm('Tem certeza que deseja excluir este atleta do cadastro?')) return;
+  try {
+    await saveRecord('athletes', { id: aid }, true);
+    notify('Atleta excluído.');
+    renderPage('atletas');
+  } catch (err) {
+    notify(err.message);
   }
-
-  if(session && isAdmin){
-    if(confirm('Deseja sair da área administrativa?')){
-      await db.auth.signOut();
-    }
-    return;
-  }
-
-  if(session && !isAdmin){
-    notify('Você está conectado como atleta.');
-    return;
-  }
-
-  showLogin();
 }
 
-
-async function athleteAction(){
-  if(demo || !db){
-    notify('Configure o Supabase para acessar a Área do Atleta.');
-    return;
-  }
-
-  if(!session){
-    showAthleteOptions();
-    return;
-  }
-
-  if(!currentAthlete){
-    const {data:account, error} = await db
-      .from('athlete_accounts')
-      .select('athlete_id')
-      .eq('user_id', session.user.id)
-      .single();
-
-    if(error || !account){
-      notify('Não foi possível identificar o atleta conectado.');
-      return;
-    }
-
-    currentAthlete = state.athletes.find(
-      a => a.id === account.athlete_id
-    );
-  }
-
-  if(!currentAthlete){
-    notify('Atleta não encontrado na lista.');
-    return;
-  }
-
-  renderAthleteDashboard(currentAthlete);
-}
-
-function athleteOptionsHtml(selectedId=''){
-  return state.athletes.map(a=>`
-    <option value="${esc(a.id)}" ${a.id===selectedId?'selected':''}>
-      ${esc(a.name)}
-    </option>
-  `).join('');
-}
-
-function showAthleteOptions(){
-  showAdmin(`
-    <h2>Área do Atleta</h2>
-    <p>Bem-vindo ao espaço dos atletas do BABA HUMILDES.</p>
-
-    <div class="modal-actions">
-      <button class="btn-primary" id="athleteFirstAccess">
-        Primeiro acesso
-      </button>
-      <button class="btn-primary" id="athleteExistingAccess">
-        Já tenho uma conta
-      </button>
-    </div>
-  `);
-
-  $('#athleteFirstAccess').onclick=showAthleteRegister;
-  $('#athleteExistingAccess').onclick=()=>showAthleteLogin();
-}
-
-
-function renderAthleteDashboard(athlete){
-  const team = state.teams.find(t => t.id === athlete.team_id);
-
-  const goals = state.goals.filter(
-    g => g.athlete_id === athlete.id
-  ).length;
-
-  const cards = state.cards.filter(
-    c => c.athlete_id === athlete.id
-  ).length;
-
-  const now = new Date();
-
-  
-const upcomingMatches = state.matches
-  .filter(match => {
-    const matchDate = new Date(
-      `${match.date}T${match.time || '00:00:00'}`
-    );
-
-    return match.status === 'Agendada' && matchDate >= now;
-  })
-  .sort((a, b) => {
-    return new Date(`${a.date}T${a.time || '00:00:00'}`) -
-           new Date(`${b.date}T${b.time || '00:00:00'}`);
-  })
-  .slice(0, 1);
-
-
-  currentPage = 'atleta';
-  setTitle('Área do Atleta');
-
-  const attendanceHtml = upcomingMatches.length
-    ? upcomingMatches.map(match => {
-        const response = state.attendance_confirmations.find(
-          item =>
-            item.athlete_id === athlete.id &&
-            item.match_id === match.id
-        );
-
-        const teamA = state.teams.find(t => t.id === match.team_a);
-        const teamB = state.teams.find(t => t.id === match.team_b);
-
-        const matchDate = new Date(
-          `${match.date}T${match.time || '00:00:00'}`
-        );
-
-        const dateLabel = matchDate.toLocaleDateString('pt-BR');
-        const timeLabel = match.time
-          ? String(match.time).slice(0, 5)
-          : '';
-
-        return `
-          <div class="card" style="padding:18px;margin-bottom:14px;">
-            
-<div style="display:flex;align-items:center;justify-content:center;gap:28px;margin:18px 0;text-align:center;">
-
-  <div style="display:flex;flex-direction:column;align-items:center;gap:8px;">
-    ${
-      teamA?.logo_url
-        ? `<img src="${esc(teamA.logo_url)}" alt="Escudo ${esc(teamA.name)}" style="width:65px;height:65px;object-fit:contain;">`
-        : '<span>⚽</span>'
-    }
-    <strong>${esc(teamA?.name || 'Time A')}</strong>
-  </div>
-
-  <strong style="font-size:22px;">×</strong>
-
-  <div style="display:flex;flex-direction:column;align-items:center;gap:8px;">
-    ${
-      teamB?.logo_url
-        ? `<img src="${esc(teamB.logo_url)}" alt="Escudo ${esc(teamB.name)}" style="width:65px;height:65px;object-fit:contain;">`
-        : '<span>⚽</span>'
-    }
-    <strong>${esc(teamB?.name || 'Time B')}</strong>
-  </div>
-
-</div>
-
-
-            <p>
-              <strong>Data:</strong> ${dateLabel}
-              ${timeLabel ? ` às ${timeLabel}` : ''}
-            </p>
-
-            <p>
-              <strong>Minha resposta:</strong>
-              ${
-                response?.status === 'confirmed'
-                  ? 'Presença confirmada'
-                  : response?.status === 'declined'
-                    ? 'Não vou comparecer'
-                    : 'Ainda não respondi'
-              }
-            </p>
-
-            <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;">
-              <button
-                class="btn-primary"
-                data-attendance="confirmed"
-                data-match-id="${esc(match.id)}">
-                Confirmar presença
-              </button>
-
-              <button
-                class="btn-primary"
-                data-attendance="declined"
-                data-match-id="${esc(match.id)}">
-                Não vou
-              </button>
-            </div>
-          </div>
-        `;
-      }).join('')
-    : '<p>Não existem partidas futuras agendadas no momento.</p>';
+/**
+ * 4.3 TIMES & TABELA (renderTeams)
+ */
+function renderTeams() {
+  const activeSeason = getActiveTemporada();
+  const standings = calculateStandings();
 
   $('#appContent').innerHTML = `
     <div class="page-header">
       <div>
-        <div class="eyebrow">BABA HUMILDES</div>
-        <h1>Olá, ${esc(athlete.name)}!</h1>
-        <p>Bem-vindo à sua área pessoal.</p>
+        <div class="eyebrow">TEMPORADA ${activeSeason.ano}</div>
+        <h1>Classificação Oficial dos Times</h1>
+        <p>Pontos corridos: Vitória = 3 pts, Empate = 1 pt, Derrota = 0. Desempate: Pontos > Vitórias > Saldo de Gols > Gols Pró.</p>
+      </div>
+      ${isAdmin ? `<button class="btn btn-secondary" onclick="editTeamModal()">+ Adicionar / Editar Time</button>` : ''}
+    </div>
+
+    <div class="table-wrap" style="margin-bottom:25px;">
+      <table class="standings-table">
+        <thead>
+          <tr>
+            <th style="width:50px;">Pos</th>
+            <th>Time</th>
+            <th>Pontos</th>
+            <th>Jogos</th>
+            <th>Vitórias</th>
+            <th>Empates</th>
+            <th>Derrotas</th>
+            <th>GP</th>
+            <th>GC</th>
+            <th>Saldo (SG)</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${standings.map((row, idx) => `
+            <tr>
+              <td class="standings-pos">${idx + 1}º</td>
+              <td>
+                <div style="display:flex; align-items:center; gap:10px;">
+                  <div class="team-badge" style="width:34px; height:38px; font-size:12px; border:1px solid ${row.team.cor}; color:${row.team.cor};">
+                    ${row.team.badge}
+                  </div>
+                  <div>
+                    <strong style="font-size:13px; color:${row.team.cor};">${esc(row.team.nome)}</strong>
+                  </div>
+                </div>
+              </td>
+              <td class="standings-pts" style="color:var(--gold); font-size:18px;">${row.pontos}</td>
+              <td>${row.jogos}</td>
+              <td style="color:#8ce4a6; font-weight:600;">${row.vitorias}</td>
+              <td>${row.empates}</td>
+              <td style="color:#f78d88;">${row.derrotas}</td>
+              <td>${row.golsPro}</td>
+              <td>${row.golsContra}</td>
+              <td style="font-weight:700; color:${row.saldoGols > 0 ? '#8ce4a6' : row.saldoGols < 0 ? '#f78d88' : 'inherit'};">
+                ${row.saldoGols > 0 ? '+' : ''}${row.saldoGols}
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="page-header" style="margin-top:20px;">
+      <div>
+        <div class="eyebrow">ELENCO POR TIME</div>
+        <h2>Escalação dos Dois Quadros</h2>
       </div>
     </div>
 
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin:20px 0;">
-      
-<div class="card" style="padding:20px;">
-  <h3>Meu time</h3>
+    <div class="cards-grid">
+      ${state.teams.map(t => {
+        const teamAthletes = state.athletes.filter(a => a.team_id === t.id);
+        return `
+          <div class="panel">
+            <div class="panel-heading" style="border-bottom:1px solid var(--line); padding-bottom:12px;">
+              <div style="display:flex; align-items:center; gap:12px;">
+                <div class="team-badge" style="width:40px; height:44px; border:1px solid ${t.cor}; color:${t.cor};">
+                  ${t.badge}
+                </div>
+                <div>
+                  <h3 style="margin:0; font:800 20px var(--display); color:${t.cor};">${esc(t.nome)}</h3>
+                  <small style="color:var(--muted);">${teamAthletes.length} atletas inscritos</small>
+                </div>
+              </div>
+            </div>
 
-  <div style="display:flex;align-items:center;gap:12px;">
-    ${
-      team?.logo_url
-        ? `<img src="${esc(team.logo_url)}" alt="Escudo ${esc(team.name)}" style="width:48px;height:48px;object-fit:contain;">`
-        : ''
-    }
-    <strong>${esc(team?.name || 'Sem time definido')}</strong>
-  </div>
-</div>
-
-
-      <div class="card" style="padding:20px;">
-        <h3>Camisa</h3>
-        <p>${athlete.number ?? 'Não definido'}</p>
-      </div>
-
-      <div class="card" style="padding:20px;">
-        <h3>Gols</h3>
-        <p>${goals}</p>
-      </div>
-
-      <div class="card" style="padding:20px;">
-        <h3>Cartões</h3>
-        <p>${cards}</p>
-      </div>
-    </div>
-
-    <div class="card" style="padding:20px;margin-top:20px;">
-      <h2>Meu perfil</h2>
-      <p><strong>Nome:</strong> ${esc(athlete.name)}</p>
-      <p><strong>Posição:</strong> ${esc(athlete.position || 'Não definida')}</p>
-      <p><strong>Número:</strong> ${athlete.number ?? 'Não definido'}</p>
-      <p><strong>Time:</strong> ${esc(team?.name || 'Não definido')}</p>
-    </div>
-
-    <div style="margin-top:24px;">
-      <h2>Confirmação de presença</h2>
-      <p>Informe se você vai participar das próximas partidas.</p>
-      ${attendanceHtml}
-    </div>
-
-    <div style="margin-top:24px;">
-      <button class="btn-primary" id="athleteLogout">
-        Sair da minha conta
-      </button>
+            <div class="list-wrap" style="margin-top:12px;">
+              ${teamAthletes.map(a => `
+                <div class="rank-row">
+                  <span style="font-weight:700; width:25px; color:var(--muted);">${a.numero_camisa ? `#${a.numero_camisa}` : '—'}</span>
+                  <span class="rank-name">${esc(a.apelido)} ${a.is_diretoria ? '★' : ''}</span>
+                  <span class="rank-meta">${a.posicao || 'Jogador'}</span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `;
+      }).join('')}
     </div>
   `;
+}
 
-  document.querySelectorAll('[data-attendance]').forEach(button => {
-    button.onclick = async () => {
-      const matchId = button.dataset.matchId;
-      const status = button.dataset.attendance;
+/**
+ * 4.4 PARTIDAS & SÚMULA DIGITAL (renderMatches)
+ */
+function renderMatches() {
+  const activeSeason = getActiveTemporada();
+  let filter = 'todas';
 
-      button.disabled = true;
+  function draw() {
+    let list = [...state.matches].sort((a, b) => new Date(b.data) - new Date(a.data));
+    if (filter === 'Agendada') list = list.filter(m => m.status === 'Agendada');
+    if (filter === 'Finalizada') list = list.filter(m => m.status === 'Finalizada');
 
-      const { data, error } = await db
-        .from('attendance_confirmations')
-        .upsert(
-          {
-            athlete_id: athlete.id,
-            match_id: matchId,
-            status: status
-          },
-          {
-            onConflict: 'athlete_id,match_id'
-          }
-        )
-        .select()
-        .single();
+    $('#matchesList').innerHTML = list.length ? list.map(m => {
+      const tA = state.teams.find(t => t.id === m.time_a) || { nome: 'Time A', cor: '#75a88a' };
+      const tB = state.teams.find(t => t.id === m.time_b) || { nome: 'Time B', cor: '#d5b46a' };
+      const juiz = state.juizes.find(j => j.id === m.juiz_id);
+      const isFin = m.status === 'Finalizada';
+      const mGoals = state.goals.filter(g => g.match_id === m.id);
 
-      if(error){
-        console.error(error);
-        notify('Não foi possível registrar sua resposta.');
-        button.disabled = false;
-        return;
-      }
+      return `
+        <div class="panel" style="margin-bottom:16px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+            <div>
+              <span class="tag ${isFin ? 'tag-green' : 'tag-gold'}">${esc(m.status.toUpperCase())}</span>
+              <span style="font-size:11px; color:var(--muted); margin-left:8px;">
+                📅 ${new Date(m.data + 'T12:00:00Z').toLocaleDateString('pt-BR')} • ${m.hora || '07:30'} • ${esc(m.tipo)}
+              </span>
+            </div>
+            ${juiz ? `<span style="font-size:11px; color:var(--gold);">⚖ Árbitro: ${esc(juiz.nome)}</span>` : ''}
+          </div>
 
-      const index = state.attendance_confirmations.findIndex(
-        item =>
-          item.athlete_id === athlete.id &&
-          item.match_id === matchId
-      );
+          <div class="scoreline" style="background:#0e1913; border:1px solid var(--line); border-radius:10px;">
+            <div style="flex:1; text-align:right;">
+              <div style="font:800 24px var(--display); color:${tA.cor};">${esc(tA.nome)}</div>
+            </div>
+            <strong style="font:800 38px var(--display); padding:0 20px; color:${isFin ? '#fff' : 'var(--muted)'};">
+              ${m.placar_a} <span style="font-size:20px; color:var(--muted);">×</span> ${m.placar_b}
+            </strong>
+            <div style="flex:1; text-align:left;">
+              <div style="font:800 24px var(--display); color:${tB.cor};">${esc(tB.nome)}</div>
+            </div>
+          </div>
 
-      if(index >= 0){
-        state.attendance_confirmations[index] = data;
-      } else {
-        state.attendance_confirmations.push(data);
-      }
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px;">
+            <div style="font-size:11px; color:var(--muted);">
+              ⚽ ${mGoals.length} gol(s) anotado(s) na súmula
+            </div>
+            <div style="display:flex; gap:8px;">
+              <button class="btn btn-secondary" onclick="openSumulaModal('${m.id}')">
+                Abrir Súmula Digital ↗
+              </button>
+              ${isAdmin ? `
+                <button class="btn btn-outline" onclick="editMatchSchedule('${m.id}')">Editar</button>
+              ` : ''}
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('') : `<div class="empty-state">Nenhuma partida encontrada nesta categoria.</div>`;
+  }
 
-      notify(
-        status === 'confirmed'
-          ? 'Presença confirmada!'
-          : 'Resposta registrada: você não vai.'
-      );
+  $('#appContent').innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="eyebrow">TEMPORADA ${activeSeason.ano}</div>
+        <h1>Partidas & Súmula Eletrônica</h1>
+        <p>Acompanhe todos os confrontos, gols, assistências, cartões e confirme presenças nos jogos agendados.</p>
+      </div>
+      ${isAdmin ? `<button class="btn btn-gold" id="btnNewMatch">+ Agendar Nova Partida</button>` : ''}
+    </div>
 
-      renderAthleteDashboard(athlete);
+    <div class="subtabs" id="matchSubtabs">
+      <button class="tab-btn active" data-filter="todas">Todas as Partidas</button>
+      <button class="tab-btn" data-filter="Agendada">Agendadas</button>
+      <button class="tab-btn" data-filter="Finalizada">Finalizadas</button>
+    </div>
+
+    <div id="matchesList"></div>
+  `;
+
+  $$('#matchSubtabs .tab-btn').forEach(btn => {
+    btn.onclick = () => {
+      $$('#matchSubtabs .tab-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      filter = btn.dataset.filter;
+      draw();
     };
   });
 
-  $('#athleteLogout').onclick = async () => {
-    if(confirm('Deseja sair da sua conta?')){
-      await db.auth.signOut();
-      await updateAdminStatus();
-      renderPage('inicio');
-      notify('Você saiu da sua conta.');
-    }
-  };
-}
-
-
-
-function showAthleteRegister(){
-  if(!state.athletes.length){
-    notify('Nenhum atleta cadastrado.');
-    return;
+  if ($('#btnNewMatch')) {
+    $('#btnNewMatch').onclick = () => editMatchSchedule();
   }
 
-  showAdmin(`
-    <h2>Primeiro acesso</h2>
-    <p>Selecione seu nome e crie uma senha.</p>
+  draw();
+}
 
-    <form id="athleteRegisterForm">
-      <div class="field">
-        <label>Seu nome</label>
-        <select name="athlete_id" required>
-          <option value="">Selecione seu nome</option>
-          ${athleteOptionsHtml()}
-        </select>
+function editMatchSchedule(matchId = '') {
+  const m = matchId ? state.matches.find(x => x.id === matchId) : {};
+  showEdit(`
+    <h2>${m.id ? 'Editar Partida' : 'Agendar Nova Partida'}</h2>
+    <form id="matchScheduleForm">
+      <div class="form-grid">
+        <div class="field">
+          <label>Time A (Mandante)</label>
+          <select name="time_a" required>
+            ${state.teams.map(t => `<option value="${t.id}" ${m.time_a === t.id ? 'selected' : ''}>${esc(t.nome)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field">
+          <label>Time B (Visitante)</label>
+          <select name="time_b" required>
+            ${state.teams.map(t => `<option value="${t.id}" ${m.time_b === t.id ? 'selected' : (t.id === 'team-b' ? 'selected' : '')}>${esc(t.nome)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field">
+          <label>Data da Partida *</label>
+          <input type="date" name="data" required value="${m.data || ''}">
+        </div>
+        <div class="field">
+          <label>Horário</label>
+          <input type="time" name="hora" value="${m.hora || '07:30'}">
+        </div>
+        <div class="field">
+          <label>Tipo de Partida</label>
+          <select name="tipo">
+            <option ${m.tipo === 'Domingo' ? 'selected' : ''}>Domingo</option>
+            <option ${m.tipo === 'Feriado' ? 'selected' : ''}>Feriado</option>
+            <option ${m.tipo === 'Especial' ? 'selected' : ''}>Especial</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Árbitro Escalado</label>
+          <select name="juiz_id">
+            <option value="">Sem árbitro escalado</option>
+            ${state.juizes.map(j => `<option value="${j.id}" ${m.juiz_id === j.id ? 'selected' : ''}>${esc(j.nome)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field full">
+          <label>Status da Partida</label>
+          <select name="status">
+            <option ${m.status === 'Agendada' ? 'selected' : ''}>Agendada</option>
+            <option ${m.status === 'Finalizada' ? 'selected' : ''}>Finalizada</option>
+            <option ${m.status === 'Cancelada' ? 'selected' : ''}>Cancelada</option>
+          </select>
+        </div>
       </div>
-
-      <div class="field">
-        <label>Crie sua senha</label>
-        <input type="password" name="password"
-          minlength="8" required>
-      </div>
-
-      <div class="field">
-        <label>Confirme sua senha</label>
-        <input type="password" name="confirmPassword"
-          minlength="8" required>
-      </div>
-
       <div class="modal-actions">
-        <button type="button" class="btn-primary"
-          id="backAthleteOptions">Voltar</button>
-        <button class="btn-primary">Criar minha conta</button>
+        <button type="button" class="btn-secondary" data-close>Cancelar</button>
+        <button type="submit" class="btn-primary">Salvar Partida</button>
       </div>
     </form>
   `);
 
-  $('#backAthleteOptions').onclick=showAthleteOptions;
-
-  $('#athleteRegisterForm').onsubmit=async e=>{
+  $('#matchScheduleForm').onsubmit = async e => {
     e.preventDefault();
-
-    const f=new FormData(e.target);
-    const athleteId=f.get('athlete_id');
-    const password=f.get('password');
-    const confirmPassword=f.get('confirmPassword');
-
-    if(password!==confirmPassword){
-      notify('As senhas não são iguais.');
-      return;
-    }
-
-    try{
-      const {data,error}=await db.functions.invoke(
-        'register-athlete',
-        {body:{athlete_id:athleteId,password}}
-      );
-
-      if(error){
-        console.error(error);
-        notify(data?.error||error.message);
-        return;
-      }
-
-      if(data?.error){
-        notify(data.error);
-        return;
-      }
-
-      notify('Cadastro realizado com sucesso!');
-      showAthleteLogin(athleteId);
-
-    }catch(error){
-      console.error(error);
-      notify('Erro ao realizar cadastro.');
-    }
-  };
-}
-
-
-function showAthleteLogin(selectedId=''){
-  if(!state.athletes.length){
-    notify('Nenhum atleta cadastrado.');
-    return;
-  }
-
-  showAdmin(`
-    <h2>Login do Atleta</h2>
-    <p>Entre com seu nome e sua senha.</p>
-
-    <form id="athleteLoginForm">
-      <div class="field">
-        <label>Seu nome</label>
-        <select name="athlete_id" required>
-          <option value="">Selecione seu nome</option>
-          ${athleteOptionsHtml(selectedId)}
-        </select>
-      </div>
-
-      <div class="field">
-        <label>Senha</label>
-        <input type="password" name="password" required>
-      </div>
-
-      <div class="modal-actions">
-        <button type="button" class="btn-primary"
-          id="backAthleteOptions">Voltar</button>
-        <button class="btn-primary">Entrar</button>
-      </div>
-    </form>
-  `);
-
-  $('#backAthleteOptions').onclick=showAthleteOptions;
-
-  $('#athleteLoginForm').onsubmit=async e=>{
-    e.preventDefault();
-
-    const f=new FormData(e.target);
-    const athleteId=f.get('athlete_id');
-    const email=`athlete-${athleteId}@login.babahumildes.com`;
-
-    const {data,error}=await db.auth.signInWithPassword({
-      email,
-      password:f.get('password')
-    });
-
-    if(error){
-      notify('Nome ou senha incorretos.');
-      return;
-    }
-
-    session=data.session;
-    await updateAdminStatus();
-
-    const {data:account,error:accountError}=await db
-      .from('athlete_accounts')
-      .select('athlete_id')
-      .eq('user_id',session.user.id)
-      .single();
-
-    if(accountError || !account){
-      notify('Não foi possível identificar seu cadastro.');
-      await db.auth.signOut();
-      return;
-    }
-
-    const athlete=state.athletes.find(
-      a=>a.id===account.athlete_id
-    );
-
-    if(!athlete){
-      notify('Atleta não encontrado.');
-      return;
-    }
-
-    $('#adminDialog').close();
-    currentAthlete = athlete;
-    renderAthleteDashboard(athlete);
-  };
-}
-
-
-
-
-function showAdmin(html){
-  $('#adminDialogBody').innerHTML = html;
-  $('#adminDialog').showModal();
-}
-function showPasswordReset(){
-  showAdmin(`
-    <h2>Redefinir senha</h2>
-    <p>Cadastre uma nova senha para sua conta administrativa.</p>
-
-    <form id="passwordResetForm">
-      <div class="field">
-        <label>Nova senha</label>
-        <input type="password" name="password" minlength="8" required>
-      </div>
-
-      <div class="field">
-        <label>Confirmar nova senha</label>
-        <input type="password" name="confirmPassword" minlength="8" required>
-      </div>
-
-      <div class="modal-actions">
-        <button type="submit" class="btn-primary">Salvar nova senha</button>
-      </div>
-    </form>
-  `);
-
-  $('#passwordResetForm').onsubmit = async e => {
-    e.preventDefault();
-
     const f = new FormData(e.target);
-    const password = f.get('password');
-    const confirmPassword = f.get('confirmPassword');
+    const tA = f.get('time_a');
+    const tB = f.get('time_b');
+    if (tA === tB) return notify('Selecione dois times distintos para o confronto.');
 
-    if(password !== confirmPassword){
-      notify('As senhas não são iguais.');
-      return;
+    const matchData = {
+      id: m.id || id(),
+      data: f.get('data'),
+      hora: f.get('hora') || '07:30',
+      tipo: f.get('tipo') || 'Domingo',
+      time_a: tA,
+      time_b: tB,
+      juiz_id: f.get('juiz_id') || null,
+      status: f.get('status') || 'Agendada',
+      placar_a: m.placar_a || 0,
+      placar_b: m.placar_b || 0,
+      temporada_id: getActiveTemporada().id
+    };
+
+    try {
+      await saveRecord('matches', matchData);
+      $('#editDialog').close();
+      notify('Partida agendada com sucesso!');
+      renderPage('partidas');
+    } catch (err) {
+      notify(err.message);
     }
-
-    const {error} = await db.auth.updateUser({password});
-
-    if(error){
-      notify('Não foi possível alterar a senha: ' + error.message);
-      return;
-    }
-
-    notify('Senha alterada com sucesso!');
-    $('#adminDialog').close();
   };
 }
-function showLogin(){
-  showAdmin(`
-    <h2>Área administrativa</h2>
-    <p>Entre com seu e-mail e sua senha.</p>
 
+/**
+ * 4.5 MODAL DE SÚMULA DIGITAL
+ */
+function openSumulaModal(matchId) {
+  const m = state.matches.find(x => x.id === matchId);
+  if (!m) return;
+
+  const tA = state.teams.find(t => t.id === m.time_a) || { nome: 'Time A', cor: '#75a88a' };
+  const tB = state.teams.find(t => t.id === m.time_b) || { nome: 'Time B', cor: '#d5b46a' };
+  const juiz = state.juizes.find(j => j.id === m.juiz_id);
+
+  const mGoals = state.goals.filter(g => g.match_id === matchId);
+  const mCards = state.cards.filter(c => c.match_id === matchId);
+  const mPresencas = state.presencas.filter(p => p.match_id === matchId);
+
+  showEdit(`
+    <div style="border-bottom:1px solid var(--line); padding-bottom:12px; margin-bottom:14px;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <span class="tag ${m.status === 'Finalizada' ? 'tag-green' : 'tag-gold'}">${esc(m.status.toUpperCase())}</span>
+          <span style="font-size:11px; color:var(--muted); margin-left:8px;">
+            ${new Date(m.data + 'T12:00:00Z').toLocaleDateString('pt-BR')} • ${m.hora || '07:30'}
+          </span>
+        </div>
+        ${juiz ? `<span class="badge-tag info">⚖ ${esc(juiz.nome)}</span>` : ''}
+      </div>
+
+      <div class="scoreline" style="margin:12px 0 6px;">
+        <div style="flex:1; text-align:right;"><span style="color:${tA.cor}; font:800 22px var(--display);">${esc(tA.nome)}</span></div>
+        <strong style="font:800 36px var(--display); padding:0 16px;">${m.placar_a} × ${m.placar_b}</strong>
+        <div style="flex:1; text-align:left;"><span style="color:${tB.cor}; font:800 22px var(--display);">${esc(tB.nome)}</span></div>
+      </div>
+      <div style="text-align:center; font-size:10px; color:var(--muted);">
+        O placar é atualizado automaticamente conforme os gols são adicionados.
+      </div>
+    </div>
+
+    ${isAdmin ? `
+      <div style="display:flex; gap:8px; margin-bottom:16px;">
+        <button class="btn btn-secondary" onclick="addGoalModal('${matchId}')">⚽ + Registrar Gol</button>
+        <button class="btn btn-secondary" onclick="addCardModal('${matchId}')">🟨 + Registrar Cartão</button>
+        ${m.status === 'Agendada' ? `
+          <button class="btn btn-primary" onclick="toggleFinishMatch('${matchId}', true)" style="margin-left:auto;">
+            ✓ Finalizar Partida
+          </button>
+        ` : `
+          <button class="btn btn-outline" onclick="toggleFinishMatch('${matchId}', false)" style="margin-left:auto;">
+            Reabrir Partida
+          </button>
+        `}
+      </div>
+    ` : ''}
+
+    <div class="sumula-events-container">
+      <div class="sumula-team-column">
+        <h3><span>⚽ Gols Anotados</span> <small style="font-size:11px; color:var(--muted);">${mGoals.length} gol(s)</small></h3>
+        ${mGoals.length ? mGoals.map(g => {
+          const author = state.athletes.find(a => a.id === g.athlete_id);
+          const assist = state.assistencias.find(as => as.match_id === matchId && as.goal_id === g.id);
+          const garcom = assist ? state.athletes.find(a => a.id === assist.athlete_id) : null;
+          return `
+            <div class="event-item">
+              <div>
+                <span class="author">⚽ ${author ? esc(author.apelido) : 'Atleta'}</span>
+                ${g.minuto ? `<small style="color:var(--muted);"> (${g.minuto}')</small>` : ''}
+                ${garcom ? `<span class="assist">🎯 Passe: ${esc(garcom.apelido)}</span>` : ''}
+              </div>
+              ${isAdmin ? `<button class="btn-remove" onclick="removeGoalAction('${g.id}', '${matchId}')">✕</button>` : ''}
+            </div>
+          `;
+        }).join('') : '<div style="font-size:11px; color:var(--muted);">Nenhum gol anotado.</div>'}
+      </div>
+
+      <div class="sumula-team-column">
+        <h3><span>🟨 Disciplina & Cartões</span> <small style="font-size:11px; color:var(--muted);">${mCards.length} cartão(ões)</small></h3>
+        ${mCards.length ? mCards.map(c => {
+          const author = state.athletes.find(a => a.id === c.athlete_id);
+          const isRed = c.type === 'Vermelho';
+          return `
+            <div class="event-item">
+              <div>
+                <span style="font-weight:700; color:${isRed ? '#f78d88' : '#ffd874'};">
+                  ${isRed ? '🟥 Vermelho' : '🟨 Amarelo'}
+                </span>
+                <span class="author" style="margin-left:6px;">${author ? esc(author.apelido) : 'Atleta'}</span>
+              </div>
+              ${isAdmin ? `<button class="btn-remove" onclick="removeCardAction('${c.id}', '${matchId}')">✕</button>` : ''}
+            </div>
+          `;
+        }).join('') : '<div style="font-size:11px; color:var(--muted);">Sem cartões nesta partida.</div>'}
+      </div>
+    </div>
+
+    <div style="margin-top:20px; border-top:1px solid var(--line); padding-top:14px;">
+      <h3 style="font:700 18px var(--display); margin-bottom:10px;">Presenças Confirmadas (${mPresencas.filter(p => p.confirmado).length})</h3>
+      <div style="display:flex; flex-wrap:wrap; gap:8px;">
+        ${mPresencas.filter(p => p.confirmado).map(p => {
+          const athlete = state.athletes.find(a => a.id === p.atleta_id);
+          return athlete ? `
+            <span class="badge-tag success">
+              ✓ ${esc(athlete.apelido)}
+              ${isAdmin ? `<button onclick="toggleAttendanceAdmin('${matchId}','${athlete.id}', false)" style="background:none; border:0; color:#fff; cursor:pointer; margin-left:4px;">✕</button>` : ''}
+            </span>
+          ` : '';
+        }).join('') || '<div style="font-size:11px; color:var(--muted);">Nenhuma presença confirmada.</div>'}
+      </div>
+    </div>
+  `);
+}
+
+function addGoalModal(matchId) {
+  showAdmin(`
+    <h2>Registrar Gol</h2>
+    <form id="goalForm">
+      <div class="field">
+        <label>Autor do Gol *</label>
+        <select name="athlete_id" required>
+          <option value="">Selecione o atleta</option>
+          ${state.athletes.map(a => `<option value="${a.id}">${esc(a.apelido)} (${a.posicao || 'Jogador'})</option>`).join('')}
+        </select>
+      </div>
+      <div class="field">
+        <label>Assistência / Passe (Opcional)</label>
+        <select name="assist_id">
+          <option value="">Sem assistência (gol individual / rebote)</option>
+          ${state.athletes.map(a => `<option value="${a.id}">${esc(a.apelido)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field">
+        <label>Minuto do Gol (Opcional)</label>
+        <input type="number" name="minuto" min="1" max="150" placeholder="Ex: 24">
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" data-close>Cancelar</button>
+        <button type="submit" class="btn-primary">Salvar Gol</button>
+      </div>
+    </form>
+  `);
+
+  $('#goalForm').onsubmit = async e => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const athleteId = f.get('athlete_id');
+    const assistId = f.get('assist_id');
+    const goalId = id();
+
+    const goal = {
+      id: goalId,
+      match_id: matchId,
+      athlete_id: athleteId,
+      minuto: f.get('minuto') ? Number(f.get('minuto')) : null,
+      quantidade: 1
+    };
+
+    try {
+      await saveRecord('goals', goal);
+      if (assistId && assistId !== athleteId) {
+        await saveRecord('assistencias', {
+          id: id(),
+          match_id: matchId,
+          athlete_id: assistId,
+          goal_id: goalId,
+          quantidade: 1
+        });
+      }
+      recalculateMatchScore(matchId);
+      $('#adminDialog').close();
+      notify('Gol registrado!');
+      openSumulaModal(matchId);
+      renderPage('partidas');
+    } catch (err) {
+      notify(err.message);
+    }
+  };
+}
+
+function addCardModal(matchId) {
+  showAdmin(`
+    <h2>Registrar Cartão</h2>
+    <form id="cardForm">
+      <div class="field">
+        <label>Atleta Punido *</label>
+        <select name="athlete_id" required>
+          <option value="">Selecione o atleta</option>
+          ${state.athletes.map(a => `<option value="${a.id}">${esc(a.apelido)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field">
+        <label>Tipo de Cartão</label>
+        <select name="type">
+          <option value="Amarelo">🟨 Cartão Amarelo</option>
+          <option value="Vermelho">🟥 Cartão Vermelho Direto</option>
+        </select>
+      </div>
+      <div class="notice">
+        <strong>Atenção às regras de disciplina:</strong>
+        <br>• Se o atleta receber o 2º amarelo nesta partida, o sistema emitirá automaticamente um cartão vermelho e suspensão para a próxima rodada.
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" data-close>Cancelar</button>
+        <button type="submit" class="btn-primary">Registrar Cartão</button>
+      </div>
+    </form>
+  `);
+
+  $('#cardForm').onsubmit = async e => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const athleteId = f.get('athlete_id');
+    let type = f.get('type');
+
+    // Regra do 2º amarelo no mesmo jogo
+    if (type === 'Amarelo') {
+      const existingYellows = state.cards.filter(c => c.match_id === matchId && c.atleta_id === athleteId && c.type === 'Amarelo');
+      if (existingYellows.length >= 1) {
+        type = 'Vermelho';
+        notify('2º Amarelo no jogo! Cartão convertido em VERMELHO automático.');
+      }
+    }
+
+    try {
+      await saveRecord('cards', {
+        id: id(),
+        match_id: matchId,
+        atleta_id: athleteId,
+        type
+      });
+      $('#adminDialog').close();
+      notify('Cartão registrado com sucesso!');
+      openSumulaModal(matchId);
+      renderPage('partidas');
+    } catch (err) {
+      notify(err.message);
+    }
+  };
+}
+
+async function removeGoalAction(goalId, matchId) {
+  if (!confirm('Remover este gol da súmula?')) return;
+  try {
+    await saveRecord('goals', { id: goalId }, true);
+    // Remove também a assistência associada, se houver
+    const assist = state.assistencias.find(as => as.goal_id === goalId);
+    if (assist) await saveRecord('assistencias', { id: assist.id }, true);
+
+    recalculateMatchScore(matchId);
+    notify('Gol removido.');
+    openSumulaModal(matchId);
+    renderPage('partidas');
+  } catch (err) {
+    notify(err.message);
+  }
+}
+
+async function removeCardAction(cardId, matchId) {
+  if (!confirm('Remover este cartão?')) return;
+  try {
+    await saveRecord('cards', { id: cardId }, true);
+    notify('Cartão removido.');
+    openSumulaModal(matchId);
+    renderPage('partidas');
+  } catch (err) {
+    notify(err.message);
+  }
+}
+
+async function toggleFinishMatch(matchId, shouldFinish) {
+  const m = state.matches.find(x => x.id === matchId);
+  if (!m) return;
+  m.status = shouldFinish ? 'Finalizada' : 'Agendada';
+  try {
+    await saveRecord('matches', m);
+    notify(shouldFinish ? 'Partida finalizada! Suspensões e classificação atualizadas.' : 'Partida reaberta.');
+    openSumulaModal(matchId);
+    renderPage('partidas');
+  } catch (err) {
+    notify(err.message);
+  }
+}
+
+/**
+ * 4.6 CONFIRMAÇÃO DE PRESENÇA COM TRAVAS DE SEGURANÇA
+ */
+function openPublicAttendanceModal(matchId) {
+  const m = state.matches.find(x => x.id === matchId);
+  if (!m) return;
+
+  showEdit(`
+    <h2>Confirmar Presença no Baba</h2>
+    <p>Selecione seu nome para confirmar presença na partida de <strong>${new Date(m.data + 'T12:00:00Z').toLocaleDateString('pt-BR')}</strong>.</p>
+    
+    <div class="field">
+      <label>Escolha o Atleta</label>
+      <select id="attendanceAthleteSelect" style="font-size:14px; padding:12px;">
+        <option value="">Selecione seu nome na lista...</option>
+        ${state.athletes.map(a => `<option value="${a.id}">${esc(a.apelido)} (${a.posicao || 'Jogador'})</option>`).join('')}
+      </select>
+    </div>
+
+    <div id="attendanceStatusFeedback" style="margin:14px 0;"></div>
+
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" data-close>Cancelar</button>
+      <button type="button" class="btn-primary" id="btnConfirmAttendance" disabled>Confirmar Presença</button>
+    </div>
+  `);
+
+  $('#attendanceAthleteSelect').onchange = e => {
+    const aid = e.target.value;
+    const btn = $('#btnConfirmAttendance');
+    const fb = $('#attendanceStatusFeedback');
+
+    if (!aid) {
+      btn.disabled = true;
+      fb.innerHTML = '';
+      return;
+    }
+
+    const disc = calculateDisciplinaryStatus(aid);
+    const fin = checkInadimplencia(aid);
+
+    // Validação de Suspensão
+    if (disc.isSuspended) {
+      btn.disabled = true;
+      fb.innerHTML = `
+        <div class="presence-lock-alert">
+          <span>🚫</span>
+          <div>
+            <strong>PRESENÇA BLOQUEADA POR SUSPENSÃO</strong><br>
+            Motivo: ${esc(disc.reason)}. O atleta deve cumprir a suspensão automática neste jogo.
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    // Validação de Inadimplência (> 1 mês e 10 dias)
+    if (fin.isInadimplente) {
+      btn.disabled = true;
+      fb.innerHTML = `
+        <div class="presence-lock-alert">
+          <span>⚠️</span>
+          <div>
+            <strong>PRESENÇA BLOQUEADA POR PENDÊNCIA FINANCEIRA</strong><br>
+            Consta(m) mensalidade(s) em aberto do(s) mês(es): ${fin.pendingMonths.join(', ')} (anterior ao prazo de carência de 1 mês e 10 dias).
+            Valor total devido: <strong>${money(fin.totalDue)}</strong>.
+            Regularize com a diretoria para liberar sua presença.
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    // Apto
+    btn.disabled = false;
+    const alreadyConfirmed = state.presencas.some(p => p.match_id === matchId && p.atleta_id === aid && p.confirmado);
+    fb.innerHTML = `
+      <div style="padding:10px; border-radius:8px; background:#183222; border:1px solid #2d553b; color:#a2e4b4; font-size:11px;">
+        ✓ ${esc(state.athletes.find(a => a.id === aid).apelido)} está regular e <strong>APTO</strong> para o baba!
+        ${alreadyConfirmed ? '<br><em>(Você já confirmou presença nesta partida.)</em>' : ''}
+      </div>
+    `;
+
+    btn.onclick = async () => {
+      try {
+        const existing = state.presencas.find(p => p.match_id === matchId && p.atleta_id === aid);
+        const presencaRecord = {
+          id: existing ? existing.id : id(),
+          match_id: matchId,
+          atleta_id: aid,
+          confirmado: true
+        };
+        await saveRecord('presencas', presencaRecord);
+        $('#editDialog').close();
+        notify('Presença confirmada com sucesso! Bom jogo!');
+        renderPage(currentPage);
+      } catch (err) {
+        notify(err.message);
+      }
+    };
+  };
+}
+
+async function toggleAttendanceAdmin(matchId, athleteId, status) {
+  try {
+    const existing = state.presencas.find(p => p.match_id === matchId && p.atleta_id === athleteId);
+    const presencaRecord = {
+      id: existing ? existing.id : id(),
+      match_id: matchId,
+      atleta_id: athleteId,
+      confirmado: status
+    };
+    await saveRecord('presencas', presencaRecord);
+    notify('Presença atualizada.');
+    openSumulaModal(matchId);
+  } catch (err) {
+    notify(err.message);
+  }
+}
+
+/**
+ * 4.7 ESTATÍSTICAS (renderStats)
+ */
+function renderStats() {
+  const activeSeason = getActiveTemporada();
+  let tab = 'artilharia';
+
+  function draw() {
+    const container = $('#statsContentArea');
+    if (tab === 'artilharia') {
+      const scorers = getTopScorers(30);
+      container.innerHTML = `
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:50px;">Pos</th>
+                <th>Atleta</th>
+                <th>Time</th>
+                <th>Posição</th>
+                <th style="text-align:right;">Gols Marcados</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${scorers.length ? scorers.map((s, idx) => {
+                const team = state.teams.find(t => t.id === s.athlete.team_id);
+                return `
+                  <tr>
+                    <td class="standings-pos">${idx + 1}º</td>
+                    <td><strong>${esc(s.athlete.apelido)}</strong></td>
+                    <td>${team ? `<span style="color:${team.cor}; font-weight:600;">${esc(team.nome)}</span>` : '—'}</td>
+                    <td>${s.athlete.posicao || '—'}</td>
+                    <td style="text-align:right; font:800 18px var(--display); color:var(--gold);">${s.goals}</td>
+                  </tr>
+                `;
+              }).join('') : '<tr><td colspan="5" class="empty-table">Nenhum gol registrado nesta temporada.</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      `;
+    } else if (tab === 'assistencias') {
+      const assists = getTopAssists(30);
+      container.innerHTML = `
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:50px;">Pos</th>
+                <th>Atleta</th>
+                <th>Time</th>
+                <th>Posição</th>
+                <th style="text-align:right;">Assistências</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${assists.length ? assists.map((s, idx) => {
+                const team = state.teams.find(t => t.id === s.athlete.team_id);
+                return `
+                  <tr>
+                    <td class="standings-pos">${idx + 1}º</td>
+                    <td><strong>${esc(s.athlete.apelido)}</strong></td>
+                    <td>${team ? `<span style="color:${team.cor}; font-weight:600;">${esc(team.nome)}</span>` : '—'}</td>
+                    <td>${s.athlete.posicao || '—'}</td>
+                    <td style="text-align:right; font:800 18px var(--display); color:#8ce4a6;">${s.assists}</td>
+                  </tr>
+                `;
+              }).join('') : '<tr><td colspan="5" class="empty-table">Nenhuma assistência registrada nesta temporada.</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      `;
+    } else if (tab === 'disciplina') {
+      const athletesDisc = state.athletes.map(a => ({
+        athlete: a,
+        ...calculateDisciplinaryStatus(a.id)
+      })).sort((a, b) => (b.isSuspended ? 1 : 0) - (a.isSuspended ? 1 : 0) || b.totalYellows - a.totalYellows);
+
+      container.innerHTML = `
+        <div class="notice" style="margin-bottom:16px;">
+          <strong>Regras do Tribunal Disciplinar do Baba:</strong>
+          <br>• 3 Cartões Amarelos acumulados = 1 jogo de suspensão automática.
+          <br>• Cartão Vermelho Direto = 1 jogo de suspensão automática.
+          <br>• 2 Cartões Amarelos no mesmo jogo = Cartão Vermelho automático.
+          <br>• O cumprimento da suspensão exige ausência na partida finalizada.
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Atleta</th>
+                <th>Status Atual</th>
+                <th>Amarelos Acumulados</th>
+                <th>Total Amarelos</th>
+                <th>Total Vermelhos</th>
+                <th>Suspensões Cumpridas</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${athletesDisc.map(d => `
+                <tr>
+                  <td><strong>${esc(d.athlete.apelido)}</strong></td>
+                  <td>
+                    ${d.isSuspended ? `
+                      <span class="badge-tag danger">🔴 SUSPENSO: ${esc(d.reason)}</span>
+                    ` : `
+                      <span class="badge-tag success">🟢 APTO</span>
+                    `}
+                  </td>
+                  <td style="font-weight:700; color:${d.accumulatedYellows >= 2 ? '#ffd874' : 'inherit'};">
+                    ${d.accumulatedYellows} / 3
+                  </td>
+                  <td>${d.totalYellows}</td>
+                  <td style="color:#f78d88; font-weight:600;">${d.totalReds}</td>
+                  <td>${d.suspensionsServed}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+  }
+
+  $('#appContent').innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="eyebrow">TEMPORADA ${activeSeason.ano}</div>
+        <h1>Rankings Esportivos & Disciplinares</h1>
+        <p>Acompanhe a artilharia, ranking de assistências (garçons) e o controle de cartões e suspensões.</p>
+      </div>
+    </div>
+
+    <div class="subtabs" id="statsSubtabs">
+      <button class="tab-btn active" data-tab="artilharia">⚽ Artilharia</button>
+      <button class="tab-btn" data-tab="assistencias">🎯 Garçons (Assistências)</button>
+      <button class="tab-btn" data-tab="disciplina">🟨 Quadro Disciplinar & Suspensões</button>
+    </div>
+
+    <div id="statsContentArea"></div>
+  `;
+
+  $$('#statsSubtabs .tab-btn').forEach(btn => {
+    btn.onclick = () => {
+      $$('#statsSubtabs .tab-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      tab = btn.dataset.tab;
+      draw();
+    };
+  });
+
+  draw();
+}
+
+/**
+ * 4.8 FINANCEIRO & INADIMPLÊNCIA (renderFinance)
+ */
+function renderFinance() {
+  const activeSeason = getActiveTemporada();
+  let subtab = 'mensalidades';
+
+  const totalPaid = state.mensalidades.filter(m => m.pago).reduce((acc, m) => acc + Number(m.valor || 25), 0);
+  const totalExpenses = state.despesas.reduce((acc, d) => acc + Number(d.valor || 0), 0);
+  const balance = totalPaid - totalExpenses;
+  const totalPending = state.mensalidades.filter(m => !m.pago).reduce((acc, m) => acc + Number(m.valor || 25), 0);
+
+  function draw() {
+    const area = $('#financeContentArea');
+
+    if (subtab === 'mensalidades') {
+      area.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+          <div style="font-size:12px; color:var(--muted);">Controle individual de arrecadação por competência mensal.</div>
+          ${isAdmin ? `<button class="btn btn-secondary" onclick="batchGenerateDuesModal()">⚡ Gerar Mensalidades do Mês em Lote</button>` : ''}
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Atleta</th>
+                <th>Mês/Ano</th>
+                <th>Valor</th>
+                <th>Status</th>
+                <th>Forma</th>
+                <th>Comprovante</th>
+                ${isAdmin ? '<th style="text-align:right;">Ação</th>' : ''}
+              </tr>
+            </thead>
+            <tbody>
+              ${state.mensalidades.length ? state.mensalidades.map(m => {
+                const a = state.athletes.find(x => x.id === m.atleta_id);
+                return `
+                  <tr>
+                    <td><strong>${a ? esc(a.apelido) : 'Atleta'}</strong></td>
+                    <td>Mês ${String(m.mes).padStart(2,'0')}/${activeSeason.ano}</td>
+                    <td>${money(m.valor || 25)}</td>
+                    <td>
+                      <span class="pill ${m.pago ? '' : 'pending'}">${m.pago ? 'Pago' : 'Pendente'}</span>
+                    </td>
+                    <td>${m.forma_pagamento || '—'}</td>
+                    <td>${m.comprovante_url ? `<a href="${m.comprovante_url}" target="_blank" style="color:var(--gold);">Ver arquivo ↗</a>` : '—'}</td>
+                    ${isAdmin ? `
+                      <td style="text-align:right;">
+                        <button class="btn btn-outline" style="padding:4px 8px; font-size:10px;" onclick="togglePaymentStatus('${m.id}')">
+                          ${m.pago ? 'Desmarcar' : 'Dar Baixa ✓'}
+                        </button>
+                      </td>
+                    ` : ''}
+                  </tr>
+                `;
+              }).join('') : '<tr><td colspan="7" class="empty-table">Nenhuma mensalidade registrada.</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      `;
+    } else if (subtab === 'despesas') {
+      area.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+          <div style="font-size:12px; color:var(--muted);">Prestação de contas das saídas da temporada (árbitros, aluguel, material e resenha).</div>
+          ${isAdmin ? `<button class="btn btn-secondary" onclick="newExpenseModal()">+ Registrar Nova Despesa</button>` : ''}
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Data</th>
+                <th>Descrição</th>
+                <th>Categoria</th>
+                <th>Árbitro Vinculado</th>
+                <th style="text-align:right;">Valor</th>
+                ${isAdmin ? '<th style="text-align:right;">Ações</th>' : ''}
+              </tr>
+            </thead>
+            <tbody>
+              ${state.despesas.length ? state.despesas.map(d => {
+                const juiz = state.juizes.find(j => j.id === d.juiz_id);
+                return `
+                  <tr>
+                    <td>${new Date(d.data + 'T12:00:00Z').toLocaleDateString('pt-BR')}</td>
+                    <td><strong>${esc(d.descricao)}</strong></td>
+                    <td><span class="badge-tag info">${esc(d.categoria)}</span></td>
+                    <td>${juiz ? esc(juiz.nome) : '—'}</td>
+                    <td style="text-align:right; font-weight:700; color:#f78d88;">-${money(d.valor)}</td>
+                    ${isAdmin ? `
+                      <td style="text-align:right;">
+                        <button onclick="deleteExpenseAction('${d.id}')" style="background:none; border:0; color:#e57373; cursor:pointer;">Excluir</button>
+                      </td>
+                    ` : ''}
+                  </tr>
+                `;
+              }).join('') : '<tr><td colspan="6" class="empty-table">Nenhuma despesa registrada.</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      `;
+    } else if (subtab === 'inadimplentes') {
+      const debtors = state.athletes.map(a => ({
+        athlete: a,
+        fin: checkInadimplencia(a.id)
+      })).filter(x => x.fin.isInadimplente);
+
+      area.innerHTML = `
+        <div class="notice">
+          <strong>Critério de Inadimplência com Carência Humanizada:</strong>
+          <br>O Baba adota tolerância de <strong>1 mês e 10 dias</strong>. Apenas débitos com vencimento anterior a esse prazo configuram inadimplência e bloqueio de presença em partidas.
+        </div>
+
+        <div class="cards-grid">
+          ${debtors.length ? debtors.map(d => `
+            <div class="panel" style="border:1px solid #755925;">
+              <div class="panel-heading">
+                <div>
+                  <h3 style="margin:0; font:800 20px var(--display);">${esc(d.athlete.apelido)}</h3>
+                  <small style="color:var(--muted);">Mês(es) pendente(s): <strong>${d.fin.pendingMonths.join(', ')}</strong></small>
+                </div>
+                <span class="badge-tag danger">INADIMPLENTE</span>
+              </div>
+              <div style="font:800 24px var(--display); color:#f78d88; margin:8px 0;">
+                Débito: ${money(d.fin.totalDue)}
+              </div>
+              <p style="font-size:11px; color:var(--muted); line-height:1.5;">
+                O atleta está com a confirmação de presença automaticamente bloqueada para as próximas rodadas.
+              </p>
+              <button class="btn btn-secondary" style="width:100%; margin-top:8px;" onclick="openWhatsAppCardModal('${d.athlete.id}')">
+                📱 Copiar Card de Cobrança WhatsApp
+              </button>
+            </div>
+          `).join('') : '<div class="empty-state full" style="grid-column:1/-1;">Parabéns! Nenhum atleta está em situação de inadimplência fora do prazo de carência.</div>'}
+        </div>
+      `;
+    } else if (subtab === 'transparencia') {
+      area.innerHTML = `
+        <div class="panel" style="background:#111c16;">
+          <h2 style="font:700 24px var(--display); margin-bottom:6px;">Balanço Geral da Temporada ${activeSeason.ano}</h2>
+          <p style="color:var(--muted); font-size:12px; margin-bottom:18px;">
+            Prestação de contas aberta a todos os atletas e torcedores do Baba Humildes.
+          </p>
+
+          <div class="stats-grid" style="margin-bottom:20px;">
+            <div class="stat-card">
+              <div class="stat-label">TOTAL ARRECADADO</div>
+              <div class="stat-value" style="color:#8ce4a6;">${money(totalPaid)}</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">TOTAL DE DESPESAS</div>
+              <div class="stat-value" style="color:#f78d88;">${money(totalExpenses)}</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">SALDO LÍQUIDO</div>
+              <div class="stat-value" style="color:${balance >= 0 ? 'var(--gold)' : '#dc7772'};">${money(balance)}</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">PENDENTE DE COBRANÇA</div>
+              <div class="stat-value" style="color:#ffd874;">${money(totalPending)}</div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+  }
+
+  $('#appContent').innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="eyebrow">TRANSPARÊNCIA E GESTÃO FINANCEIRA</div>
+        <h1>Controle Financeiro do Baba</h1>
+        <p>Acompanhamento de mensalidades arrecadadas, despesas gerais da temporada e lista de pendências.</p>
+      </div>
+    </div>
+
+    <section class="stats-grid" style="margin-bottom:20px;">
+      <div class="stat-card">
+        <div class="stat-label">ARRECADADO</div>
+        <div class="stat-value" style="color:#8ce4a6;">${money(totalPaid)}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">DESPESAS</div>
+        <div class="stat-value" style="color:#f78d88;">${money(totalExpenses)}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">SALDO ATUAL</div>
+        <div class="stat-value" style="color:${balance >= 0 ? 'var(--gold)' : '#dc7772'};">${money(balance)}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">A RECEBER</div>
+        <div class="stat-value" style="color:#ffd874;">${money(totalPending)}</div>
+      </div>
+    </section>
+
+    <div class="subtabs" id="finSubtabs">
+      <button class="tab-btn active" data-sub="mensalidades">💳 Mensalidades</button>
+      <button class="tab-btn" data-sub="despesas">🧾 Despesas</button>
+      <button class="tab-btn" data-sub="inadimplentes">⚠️ Inadimplentes & WhatsApp</button>
+      <button class="tab-btn" data-sub="transparencia">📊 Prestação de Contas</button>
+    </div>
+
+    <div id="financeContentArea"></div>
+  `;
+
+  $$('#finSubtabs .tab-btn').forEach(btn => {
+    btn.onclick = () => {
+      $$('#finSubtabs .tab-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      subtab = btn.dataset.sub;
+      draw();
+    };
+  });
+
+  draw();
+}
+
+async function togglePaymentStatus(duesId) {
+  const due = state.mensalidades.find(m => m.id === duesId);
+  if (!due) return;
+  due.pago = !due.pago;
+  due.data_pagamento = due.pago ? new Date().toISOString() : null;
+  due.forma_pagamento = due.pago ? 'Pix' : null;
+  try {
+    await saveRecord('mensalidades', due);
+    notify(due.pago ? 'Pagamento confirmado!' : 'Status revertido para pendente.');
+    renderPage('financeiro');
+  } catch (err) {
+    notify(err.message);
+  }
+}
+
+function batchGenerateDuesModal() {
+  const activeSeason = getActiveTemporada();
+  const currentMonth = new Date().getMonth() + 1;
+
+  showAdmin(`
+    <h2>Gerar Mensalidades do Mês em Lote</h2>
+    <p>Esta rotina cria as cobranças de mensalidade para todos os atletas ativos da temporada, <strong>isentando automaticamente membros da diretoria</strong>.</p>
+    <form id="batchDuesForm">
+      <div class="field">
+        <label>Competência (Mês) *</label>
+        <select name="mes" required>
+          ${[1,2,3,4,5,6,7,8,9,10,11,12].map(m => `
+            <option value="${m}" ${m === currentMonth ? 'selected' : ''}>Mês ${String(m).padStart(2,'0')} / ${activeSeason.ano}</option>
+          `).join('')}
+        </select>
+      </div>
+      <div class="field">
+        <label>Valor Padrão da Mensalidade (R$)</label>
+        <input type="number" step="0.50" name="valor" value="${activeSeason.valor_mensalidade_padrao || 25.00}" required>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" data-close>Cancelar</button>
+        <button type="submit" class="btn-primary">Gerar para o Elenco</button>
+      </div>
+    </form>
+  `);
+
+  $('#batchDuesForm').onsubmit = async e => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const mes = Number(f.get('mes'));
+    const valor = Number(f.get('valor'));
+
+    // Filtra atletas que não são diretoria
+    const nonBoardAthletes = state.athletes.filter(a => !a.is_diretoria);
+    let count = 0;
+
+    for (const a of nonBoardAthletes) {
+      const exists = state.mensalidades.some(m => m.atleta_id === a.id && m.mes === mes && (!m.temporada_id || m.temporada_id === activeSeason.id));
+      if (!exists) {
+        state.mensalidades.push({
+          id: id(),
+          atleta_id: a.id,
+          temporada_id: activeSeason.id,
+          mes,
+          valor,
+          pago: false
+        });
+        count++;
+      }
+    }
+
+    saveLocal();
+    $('#adminDialog').close();
+    notify(`${count} mensalidade(s) gerada(s) com sucesso!`);
+    renderPage('financeiro');
+  };
+}
+
+function newExpenseModal() {
+  const activeSeason = getActiveTemporada();
+  showAdmin(`
+    <h2>Registrar Nova Despesa</h2>
+    <form id="expenseForm">
+      <div class="field">
+        <label>Descrição do Gasto *</label>
+        <input name="descricao" required placeholder="Ex: Taxa do juiz Jorge / Compra de bolas">
+      </div>
+      <div class="form-grid">
+        <div class="field">
+          <label>Categoria</label>
+          <select name="categoria">
+            <option>Árbitro</option>
+            <option>Material</option>
+            <option>Aluguel de Campo</option>
+            <option>Confraternização</option>
+            <option>Outros</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Valor (R$) *</label>
+          <input type="number" step="0.50" name="valor" required placeholder="Ex: 80.00">
+        </div>
+      </div>
+      <div class="form-grid">
+        <div class="field">
+          <label>Data</label>
+          <input type="date" name="data" required value="${new Date().toISOString().split('T')[0]}">
+        </div>
+        <div class="field">
+          <label>Árbitro Associado (Se houver)</label>
+          <select name="juiz_id">
+            <option value="">Nenhum árbitro</option>
+            ${state.juizes.map(j => `<option value="${j.id}">${esc(j.nome)}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" data-close>Cancelar</button>
+        <button type="submit" class="btn-primary">Salvar Despesa</button>
+      </div>
+    </form>
+  `);
+
+  $('#expenseForm').onsubmit = async e => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const exp = {
+      id: id(),
+      descricao: f.get('descricao').trim(),
+      categoria: f.get('categoria'),
+      valor: Number(f.get('valor')),
+      data: f.get('data'),
+      juiz_id: f.get('juiz_id') || null,
+      temporada_id: activeSeason.id
+    };
+
+    try {
+      await saveRecord('despesas', exp);
+      $('#adminDialog').close();
+      notify('Despesa registrada com sucesso!');
+      renderPage('financeiro');
+    } catch (err) {
+      notify(err.message);
+    }
+  };
+}
+
+async function deleteExpenseAction(expId) {
+  if (!confirm('Excluir este registro de despesa?')) return;
+  try {
+    await saveRecord('despesas', { id: expId }, true);
+    notify('Despesa excluída.');
+    renderPage('financeiro');
+  } catch (err) {
+    notify(err.message);
+  }
+}
+
+function openWhatsAppCardModal(athleteId) {
+  const a = state.athletes.find(x => x.id === athleteId);
+  const fin = checkInadimplencia(athleteId);
+  if (!a) return;
+
+  const msg = `⚽ *BABA HUMILDES - PALESTINA* ⚽\n` +
+              `Olá, *${a.apelido}*!\n\n` +
+              `Constatamos pendência(s) de mensalidade no baba referente ao(s) mês(es): *${fin.pendingMonths.join(', ')}*.\n` +
+              `Valor total pendente: *${money(fin.totalDue)}*.\n\n` +
+              `Conforme o regulamento, débitos anteriores ao prazo de tolerância (1 mês e 10 dias) geram bloqueio de confirmação para os jogos de domingo.\n\n` +
+              `Por favor, envie o comprovante de pagamento Pix para a diretoria regularizar sua presença no próximo baba! Valeu pela força! 🤝`;
+
+  showEdit(`
+    <h2>Card de Cobrança WhatsApp</h2>
+    <p>Mensagem educada pré-formatada pronta para envio ao atleta <strong>${esc(a.apelido)}</strong>:</p>
+    <div class="whatsapp-box" id="whatsappTextBox">${esc(msg)}</div>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" data-close>Fechar</button>
+      <button type="button" class="btn-primary" id="btnCopyWhatsApp">📋 Copiar Mensagem</button>
+    </div>
+  `);
+
+  $('#btnCopyWhatsApp').onclick = () => {
+    navigator.clipboard.writeText(msg).then(() => {
+      notify('Mensagem copiada para a área de transferência!');
+    });
+  };
+}
+
+/**
+ * 4.9 AVISOS OFICIAIS (renderAvisos)
+ */
+function renderAvisos() {
+  const notices = [...state.avisos].sort((a, b) => (b.destaque ? 1 : 0) - (a.destaque ? 1 : 0) || new Date(b.data_publicacao) - new Date(a.data_publicacao));
+
+  $('#appContent').innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="eyebrow">COMUNICAÇÃO COM A COMUNIDADE</div>
+        <h1>Mural de Avisos Oficiais</h1>
+        <p>Comunicados da diretoria, alterações de horário, convocações e informes financeiros para os atletas.</p>
+      </div>
+      ${isAdmin ? `<button class="btn btn-gold" id="btnNewNotice">+ Publicar Novo Aviso</button>` : ''}
+    </div>
+
+    <div class="notices-grid">
+      ${notices.length ? notices.map(n => `
+        <div class="notice-card ${n.destaque ? 'featured' : ''}">
+          <div class="notice-header">
+            <div>
+              <div class="badge-tag ${n.destaque ? 'gold' : 'info'}">${esc(n.tipo.toUpperCase())} ${n.destaque ? '★ FIXADO' : ''}</div>
+              <h3 class="notice-title" style="margin-top:6px;">${esc(n.titulo)}</h3>
+              <div class="notice-date">📅 ${new Date(n.data_publicacao).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}</div>
+            </div>
+          </div>
+          <div class="notice-body">${esc(n.conteudo)}</div>
+          ${isAdmin ? `
+            <div class="notice-footer">
+              <span style="font-size:10px; color:${n.ativo ? '#8ce4a6' : 'var(--muted)'};">
+                ${n.ativo ? '● Visível ao público' : '○ Oculto'}
+              </span>
+              <div class="row-actions">
+                <button onclick="editNoticeModal('${n.id}')">Editar</button> •
+                <button onclick="deleteNoticeAction('${n.id}')" style="color:#e57373;">Excluir</button>
+              </div>
+            </div>
+          ` : ''}
+        </div>
+      `).join('') : '<div class="empty-state full" style="grid-column:1/-1;">Nenhum aviso publicado no momento.</div>'}
+    </div>
+  `;
+
+  if ($('#btnNewNotice')) {
+    $('#btnNewNotice').onclick = () => editNoticeModal();
+  }
+}
+
+function editNoticeModal(noticeId = '') {
+  const n = noticeId ? state.avisos.find(x => x.id === noticeId) : {};
+  showEdit(`
+    <h2>${n.id ? 'Editar Comunicado' : 'Publicar Novo Aviso'}</h2>
+    <form id="noticeForm">
+      <div class="field">
+        <label>Título do Aviso *</label>
+        <input name="titulo" required value="${esc(n.titulo || '')}" placeholder="Ex: Horário do Baba de Domingo">
+      </div>
+      <div class="field">
+        <label>Tipo de Comunicado</label>
+        <select name="tipo">
+          <option ${n.tipo === 'Geral' ? 'selected' : ''}>Geral</option>
+          <option ${n.tipo === 'Financeiro' ? 'selected' : ''}>Financeiro</option>
+          <option ${n.tipo === 'Regra' ? 'selected' : ''}>Regra</option>
+          <option ${n.tipo === 'Convocação' ? 'selected' : ''}>Convocação</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Conteúdo da Mensagem *</label>
+        <textarea name="conteudo" rows="5" required placeholder="Digite os detalhes do comunicado para os atletas...">${esc(n.conteudo || '')}</textarea>
+      </div>
+      <div class="form-grid">
+        <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+          <input type="checkbox" name="destaque" ${n.destaque ? 'checked' : ''} style="width:auto;">
+          <span>Fixar em Destaque na Página Inicial</span>
+        </label>
+        <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+          <input type="checkbox" name="ativo" ${n.ativo !== false ? 'checked' : ''} style="width:auto;">
+          <span>Ativo / Visível ao Público</span>
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" data-close>Cancelar</button>
+        <button type="submit" class="btn-primary">Salvar Comunicado</button>
+      </div>
+    </form>
+  `);
+
+  $('#noticeForm').onsubmit = async e => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const noticeData = {
+      id: n.id || id(),
+      titulo: f.get('titulo').trim(),
+      tipo: f.get('tipo'),
+      conteudo: f.get('conteudo').trim(),
+      destaque: f.get('destaque') === 'on',
+      ativo: f.get('ativo') === 'on',
+      data_publicacao: n.data_publicacao || new Date().toISOString()
+    };
+
+    try {
+      await saveRecord('avisos', noticeData);
+      $('#editDialog').close();
+      notify('Comunicado salvo!');
+      renderPage('avisos');
+    } catch (err) {
+      notify(err.message);
+    }
+  };
+}
+
+async function deleteNoticeAction(noticeId) {
+  if (!confirm('Excluir este aviso?')) return;
+  try {
+    await saveRecord('avisos', { id: noticeId }, true);
+    notify('Aviso excluído.');
+    renderPage('avisos');
+  } catch (err) {
+    notify(err.message);
+  }
+}
+
+/**
+ * 4.10 QUADRO DE ÁRBITROS (renderJuizes)
+ */
+function renderJuizes() {
+  $('#appContent').innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="eyebrow">EQUIPE DE ARBITRAGEM</div>
+        <h1>Quadro de Juízes do Baba</h1>
+        <p>Árbitros cadastrados e escalados para conduzir as partidas de domingo com respeito e imparcialidade.</p>
+      </div>
+      ${isAdmin ? `<button class="btn btn-gold" id="btnNewJuiz">+ Novo Árbitro</button>` : ''}
+    </div>
+
+    <div class="referees-grid">
+      ${state.juizes.map(j => {
+        const matchesRefereed = state.matches.filter(m => m.juiz_id === j.id).length;
+        return `
+          <div class="referee-card">
+            <div class="referee-avatar">
+              ${j.foto_url ? `<img src="${j.foto_url}" alt="${esc(j.nome)}">` : '⚖'}
+            </div>
+            <h3 class="referee-name">${esc(j.nome)}</h3>
+            <div class="referee-phone">${esc(j.telefone || 'Telefone não informado')}</div>
+            <div style="font-size:11px; color:var(--muted); margin-bottom:12px;">
+              ⏱ <strong>${matchesRefereed}</strong> jogo(s) apitado(s)
+            </div>
+            <span class="badge-tag ${j.ativo ? 'success' : 'danger'}">${j.ativo ? 'Árbitro Ativo' : 'Inativo'}</span>
+            ${isAdmin ? `
+              <div class="row-actions" style="margin-top:14px; padding-top:10px; border-top:1px solid var(--line); width:100%;">
+                <button onclick="editJuizModal('${j.id}')">Editar</button> •
+                <button onclick="deleteJuizAction('${j.id}')" style="color:#e57373;">Excluir</button>
+              </div>
+            ` : ''}
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+
+  if ($('#btnNewJuiz')) {
+    $('#btnNewJuiz').onclick = () => editJuizModal();
+  }
+}
+
+function editJuizModal(juizId = '') {
+  const j = juizId ? state.juizes.find(x => x.id === juizId) : {};
+  showEdit(`
+    <h2>${j.id ? 'Editar Árbitro' : 'Cadastrar Árbitro'}</h2>
+    <form id="juizForm">
+      <div class="field">
+        <label>Nome do Juiz *</label>
+        <input name="nome" required value="${esc(j.nome || '')}" placeholder="Ex: Jorge Silva">
+      </div>
+      <div class="field">
+        <label>Telefone / WhatsApp</label>
+        <input name="telefone" value="${esc(j.telefone || '')}" placeholder="Ex: (71) 98888-0000">
+      </div>
+      <div class="field">
+        <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+          <input type="checkbox" name="ativo" ${j.ativo !== false ? 'checked' : ''} style="width:auto;">
+          <span>Árbitro disponível / ativo para escalações</span>
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" data-close>Cancelar</button>
+        <button type="submit" class="btn-primary">Salvar Árbitro</button>
+      </div>
+    </form>
+  `);
+
+  $('#juizForm').onsubmit = async e => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const juizData = {
+      id: j.id || id(),
+      nome: f.get('nome').trim(),
+      telefone: f.get('telefone') ? f.get('telefone').trim() : null,
+      ativo: f.get('ativo') === 'on'
+    };
+
+    try {
+      await saveRecord('juizes', juizData);
+      $('#editDialog').close();
+      notify('Árbitro salvo com sucesso!');
+      renderPage('juizes');
+    } catch (err) {
+      notify(err.message);
+    }
+  };
+}
+
+async function deleteJuizAction(juizId) {
+  if (!confirm('Excluir este árbitro?')) return;
+  try {
+    await saveRecord('juizes', { id: juizId }, true);
+    notify('Árbitro excluído.');
+    renderPage('juizes');
+  } catch (err) {
+    notify(err.message);
+  }
+}
+
+/**
+ * 4.11 ÁREA DO ATLETA (renderAthleteDashboard)
+ */
+function showAthleteSelector() {
+  showAdmin(`
+    <h2>Área do Atleta</h2>
+    <p>Selecione seu nome para consultar seu histórico esportivo e financeiro no Baba Humildes:</p>
+    <div class="field">
+      <select id="athletePortalSelect" style="font-size:14px; padding:12px;">
+        <option value="">Selecione seu perfil...</option>
+        ${state.athletes.map(a => `<option value="${a.id}">${esc(a.apelido)} (${a.posicao || 'Jogador'})</option>`).join('')}
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" data-close>Fechar</button>
+      <button type="button" class="btn-primary" id="btnEnterAthleteArea">Acessar Meu Perfil</button>
+    </div>
+  `);
+
+  $('#btnEnterAthleteArea').onclick = () => {
+    const aid = $('#athletePortalSelect').value;
+    if (!aid) return notify('Selecione um atleta.');
+    currentAthlete = state.athletes.find(a => a.id === aid);
+    $('#adminDialog').close();
+    renderAthleteProfile();
+  };
+}
+
+function renderAthleteProfile() {
+  if (!currentAthlete) return renderPage('inicio');
+  const a = currentAthlete;
+  currentPage = 'atleta';
+  setTitle(`Área do Atleta • ${a.apelido}`);
+
+  const team = state.teams.find(t => t.id === a.team_id);
+  const disc = calculateDisciplinaryStatus(a.id);
+  const fin = checkInadimplencia(a.id);
+  const nextM = getNextMatch();
+
+  const myGoals = state.goals.filter(g => g.athlete_id === a.id).length;
+  const myAssists = state.assistencias.filter(as => as.athlete_id === a.id).length;
+
+  $('#appContent').innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="eyebrow">PORTAL INDIVIDUAL DO ATLETA</div>
+        <h1>Olá, ${esc(a.apelido)}! ⚽</h1>
+        <p>Acompanhe suas estatísticas, situação disciplinar e confirme presença nas rodadas.</p>
+      </div>
+      <button class="btn btn-secondary" onclick="showAthleteSelector()">Trocar Atleta</button>
+    </div>
+
+    <section class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-label">MEUS GOLS</div>
+        <div class="stat-value" style="color:var(--gold);">${myGoals}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">MINHAS ASSISTÊNCIAS</div>
+        <div class="stat-value" style="color:#8ce4a6;">${myAssists}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">CARTÕES AMARELOS</div>
+        <div class="stat-value" style="color:#ffd874;">${disc.accumulatedYellows} <small style="font-size:12px; color:var(--muted);">/ 3</small></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">CARTÕES VERMELHOS</div>
+        <div class="stat-value" style="color:#f78d88;">${disc.totalReds}</div>
+      </div>
+    </section>
+
+    <div class="section-grid">
+      <div class="panel">
+        <div class="panel-heading">
+          <div><span class="eyebrow">AGENDA</span><h2>Confirmação para o Próximo Jogo</h2></div>
+        </div>
+        ${nextM ? `
+          <div style="background:#0e1913; padding:16px; border-radius:10px; border:1px solid var(--line); margin-bottom:14px;">
+            <div style="font-size:12px; color:var(--gold); font-weight:700; margin-bottom:6px;">
+              📅 ${new Date(nextM.data + 'T12:00:00Z').toLocaleDateString('pt-BR')} • ${nextM.hora || '07:30'}
+            </div>
+            <div style="font-size:16px; font-weight:700;">
+              ${esc(state.teams.find(t => t.id === nextM.time_a)?.nome || 'Time A')} × ${esc(state.teams.find(t => t.id === nextM.time_b)?.nome || 'Time B')}
+            </div>
+          </div>
+
+          ${disc.isSuspended ? `
+            <div class="presence-lock-alert">
+              <span>🚫</span>
+              <div>
+                <strong>VOCÊ ESTÁ SUSPENSO PARA ESTE JOGO</strong><br>
+                Motivo: ${esc(disc.reason)}. Sua presença está bloqueada.
+              </div>
+            </div>
+          ` : fin.isInadimplente ? `
+            <div class="presence-lock-alert">
+              <span>⚠️</span>
+              <div>
+                <strong>PRESENÇA BLOQUEADA POR MENSALIDADE</strong><br>
+                Consta pendência financeira de R$ ${fin.totalDue.toFixed(2)}. Fale com a diretoria para liberar.
+              </div>
+            </div>
+          ` : `
+            <button class="btn btn-gold" style="width:100%;" onclick="openPublicAttendanceModal('${nextM.id}')">
+              Confirmar Minha Presença Agora ✓
+            </button>
+          `}
+        ` : '<div class="empty-state compact">Nenhuma partida agendada.</div>'}
+      </div>
+
+      <div class="panel">
+        <div class="panel-heading">
+          <div><span class="eyebrow">SITUAÇÃO FINANCEIRA</span><h2>Minhas Mensalidades</h2></div>
+        </div>
+        ${a.is_diretoria ? `
+          <div style="padding:14px; background:#1e3328; border:1px solid #355742; border-radius:8px; color:#a2e4b4; font-size:12px;">
+            ★ <strong>Membro da Diretoria:</strong> Você é isento de pagamento de mensalidade no Baba Humildes.
+          </div>
+        ` : `
+          <div style="font-size:12px; margin-bottom:10px;">
+            Situação: ${fin.isInadimplente ? '<span class="badge-tag danger">Inadimplente</span>' : '<span class="badge-tag success">Em Dia</span>'}
+          </div>
+          <button class="text-button" data-goto="financeiro">Ver extrato completo no módulo financeiro →</button>
+        `}
+      </div>
+    </div>
+  `;
+}
+
+// ------------------------------------------------------------------------------
+// 5. PAINEL ADMINISTRATIVO E AUTENTICAÇÃO
+// ------------------------------------------------------------------------------
+
+function showAdminControlPanel() {
+  showAdmin(`
+    <h2>Painel da Diretoria • Baba Humildes</h2>
+    <p>Acesso rápido às ferramentas administrativas do sistema:</p>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:16px 0;">
+      <button class="btn btn-secondary" onclick="$('#adminDialog').close(); editAthleteModal();">👤 Novo Atleta</button>
+      <button class="btn btn-secondary" onclick="$('#adminDialog').close(); editMatchSchedule();">⚽ Nova Partida</button>
+      <button class="btn btn-secondary" onclick="$('#adminDialog').close(); batchGenerateDuesModal();">💳 Gerar Mensalidades</button>
+      <button class="btn btn-secondary" onclick="$('#adminDialog').close(); newExpenseModal();">🧾 Nova Despesa</button>
+      <button class="btn btn-secondary" onclick="$('#adminDialog').close(); editNoticeModal();">📢 Publicar Aviso</button>
+      <button class="btn btn-secondary" onclick="$('#adminDialog').close(); editJuizModal();">⚖ Cadastrar Árbitro</button>
+    </div>
+
+    <div class="modal-actions" style="margin-top:20px; border-top:1px solid var(--line); padding-top:14px;">
+      <button type="button" class="btn-outline" onclick="logoutAdmin()">Sair da Área Admin</button>
+      <button type="button" class="btn-secondary" data-close>Fechar</button>
+    </div>
+  `);
+}
+
+function showLogin() {
+  showAdmin(`
+    <h2>Área Administrativa</h2>
+    <p>Entre com seu e-mail e senha de administrador para gerenciar o sistema:</p>
     <form id="adminLoginForm">
       <div class="field">
         <label>E-mail</label>
-        <input type="email" name="email" autocomplete="username" required>
+        <input type="email" name="email" autocomplete="username" required placeholder="admin@babahumildes.com">
       </div>
-
       <div class="field">
         <label>Senha</label>
         <input type="password" name="password" autocomplete="current-password" required>
       </div>
-
+      <div class="notice">
+        <strong>Modo de Demonstração Local:</strong><br>
+        O sistema já está com todas as ações liberadas para você experimentar e testar livremente as regras de negócio!
+      </div>
       <div class="modal-actions">
         <button type="button" class="btn-secondary" data-close>Cancelar</button>
         <button type="submit" class="btn-primary">Entrar</button>
@@ -2281,44 +2673,68 @@ function showLogin(){
 
   $('#adminLoginForm').onsubmit = async e => {
     e.preventDefault();
+    if (demo) {
+      isAdmin = true;
+      updateAdminStatus();
+      $('#adminDialog').close();
+      notify('Modo demonstração: acesso administrativo ativado!');
+      renderPage('inicio');
+      return;
+    }
 
     const f = new FormData(e.target);
-
-    const {data, error} = await db.auth.signInWithPassword({
-      email: f.get('email'),
-      password: f.get('password')
-    });
-
-    if(error){
+    try {
+      const { data, error } = await db.auth.signInWithPassword({
+        email: f.get('email'),
+        password: f.get('password')
+      });
+      if (error) throw error;
+      session = data.session;
+      const { data: isAdminUser } = await db.rpc('is_admin');
+      if (!isAdminUser) {
+        await db.auth.signOut();
+        session = null;
+        isAdmin = false;
+        notify('Esta conta não possui permissão de administrador.');
+        return;
+      }
+      isAdmin = true;
+      updateAdminStatus();
+      $('#adminDialog').close();
+      notify('Login administrativo realizado com sucesso!');
+      renderPage('inicio');
+    } catch (err) {
       notify('E-mail ou senha incorretos.');
-      return;
     }
-
-    session = data.session;
-
-    const {data:isAdminUser, error:adminError} =
-      await db.rpc('is_admin');
-
-    if(adminError || isAdminUser !== true){
-      await db.auth.signOut();
-      session = null;
-      currentAthlete = null;
-      await updateAdminStatus();
-      notify('Esta conta não possui acesso administrativo.');
-      return;
-    }
-
-    isAdmin = true;
-    currentAthlete = null;
-    await updateAdminStatus();
-    $('#adminDialog').close();
-    renderPage('inicio');
-    notify('Login administrativo realizado!');
   };
 }
 
+async function logoutAdmin() {
+  if (db) await db.auth.signOut();
+  session = null;
+  isAdmin = false;
+  updateAdminStatus();
+  $('#adminDialog').close();
+  notify('Sessão administrativa encerrada.');
+  renderPage('inicio');
+}
 
-init().catch(e=>{
-  console.error(e);
-  notify('Não foi possível iniciar o sistema.');
+function showAdmin(html) {
+  $('#adminDialogBody').innerHTML = html;
+  $('#adminDialog').showModal();
+}
+
+function showEdit(html) {
+  $('#editDialogBody').innerHTML = html;
+  $('#editDialog').showModal();
+}
+
+// Inicializa a aplicação
+init().catch(err => {
+  console.error('Erro na inicialização:', err);
+  notify('Inicializando com base de dados local...');
+  loadLocal();
+  updateAdminStatus();
+  bindNavigation();
+  renderPage('inicio');
 });

@@ -1,7 +1,15 @@
--- BABA HUMILDES | Supabase PostgreSQL
--- Execute no SQL Editor do projeto Supabase.
+-- ==============================================================================
+-- BABA HUMILDES / BABA TROPICANA MANAGER - SCHEMA OFICIAL POSTGRESQL & SUPABASE
+-- ==============================================================================
+-- Este script cria todas as tabelas, relacionamentos, índices, funções de segurança
+-- e políticas RLS para suportar o portal público e o painel administrativo.
+-- Execute diretamente no SQL Editor do Supabase ou em qualquer PostgreSQL.
+
 create extension if not exists pgcrypto;
 
+-- ------------------------------------------------------------------------------
+-- 1. TABELA DE ADMINISTRADORES E FUNÇÕES DE SEGURANÇA
+-- ------------------------------------------------------------------------------
 create table if not exists public.admins (
   user_id uuid primary key references auth.users(id) on delete cascade,
   created_at timestamptz not null default now()
@@ -9,100 +17,300 @@ create table if not exists public.admins (
 
 create or replace function public.is_admin()
 returns boolean language sql stable security definer set search_path = public
-as $$ select exists(select 1 from public.admins where user_id = auth.uid()); $$;
+as $$ 
+  select exists(select 1 from public.admins where user_id = auth.uid()); 
+$$;
+
 revoke all on function public.is_admin() from public;
 grant execute on function public.is_admin() to anon, authenticated;
 
-create table if not exists public.teams (
-  id uuid primary key default gen_random_uuid(),
-  name text not null,
-  badge text not null default '',
-  color text not null default '#75a88a',
+-- ------------------------------------------------------------------------------
+-- 2. TEMPORADAS (Ciclos Anuais da Competição)
+-- ------------------------------------------------------------------------------
+create table if not exists public.temporadas (
+  id serial primary key,
+  ano integer not null unique,
+  valor_mensalidade_padrao numeric(10,2) not null default 25.00,
+  ativa boolean not null default false,
   created_at timestamptz not null default now()
 );
-create table if not exists public.athletes (
-  id uuid primary key default gen_random_uuid(),
-  name text not null,
-  position text,
-  number integer,
-  team_id uuid references public.teams(id) on delete set null,
+
+-- Garante que apenas uma temporada seja ativa de cada vez
+create or replace function public.trg_garantir_uma_temporada_ativa()
+returns trigger language plpgsql as $$
+begin
+  if new.ativa = true then
+    update public.temporadas set ativa = false where id <> new.id;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_temporada_ativa on public.temporadas;
+create trigger trg_temporada_ativa
+before insert or update on public.temporadas
+for each row execute function public.trg_garantir_uma_temporada_ativa();
+
+-- ------------------------------------------------------------------------------
+-- 3. TIMES
+-- ------------------------------------------------------------------------------
+create table if not exists public.times (
+  id serial primary key,
+  nome text not null,
+  logo_url text default '/default-team.png',
+  cor text not null default '#75a88a',
+  badge text not null default 'A',
+  temporada_id integer not null references public.temporadas(id) on delete cascade,
   created_at timestamptz not null default now()
 );
-create table if not exists public.matches (
-  id uuid primary key default gen_random_uuid(),
-  team_a uuid references public.teams(id) on delete set null,
-  team_b uuid references public.teams(id) on delete set null,
-  date date not null,
-  time time,
-  score_a integer not null default 0 check(score_a >= 0),
-  score_b integer not null default 0 check(score_b >= 0),
-  status text not null default 'Agendada' check(status in ('Agendada','Finalizada','Cancelada')),
+
+-- ------------------------------------------------------------------------------
+-- 4. ATLETAS (Cadastro Perene)
+-- ------------------------------------------------------------------------------
+create table if not exists public.atletas (
+  id serial primary key,
+  apelido text not null,               -- Campo público
+  nome_completo text,                  -- Campo restrito à diretoria
+  telefone text,                       -- Campo restrito à diretoria
+  foto_url text default '/default-player.png',
+  is_diretoria boolean not null default false, -- Isento de mensalidade
+  posicao text check (posicao in ('Goleiro','Zagueiro','Lateral','Meio-campo','Volante','Atacante')),
+  numero_camisa integer,
+  nome_camisa text,
+  created_at timestamptz not null default now()
+);
+
+-- ------------------------------------------------------------------------------
+-- 5. ATLETA_TEMPORADA (Vínculo de Elenco por Ano)
+-- ------------------------------------------------------------------------------
+create table if not exists public.atletas_temporada (
+  id serial primary key,
+  ativo boolean not null default true,
+  atleta_id integer not null references public.atletas(id) on delete cascade,
+  temporada_id integer not null references public.temporadas(id) on delete cascade,
+  time_id integer references public.times(id) on delete set null,
   created_at timestamptz not null default now(),
-  check(team_a is distinct from team_b)
+  constraint uq_atleta_temporada unique (atleta_id, temporada_id)
 );
-create table if not exists public.goals (
-  id uuid primary key default gen_random_uuid(),
-  match_id uuid not null references public.matches(id) on delete cascade,
-  athlete_id uuid not null references public.athletes(id) on delete restrict,
-  team_id uuid references public.teams(id) on delete set null,
-  minute integer check(minute between 1 and 150),
-  created_at timestamptz not null default now()
-);
-create table if not exists public.cards (
-  id uuid primary key default gen_random_uuid(),
-  match_id uuid not null references public.matches(id) on delete cascade,
-  athlete_id uuid not null references public.athletes(id) on delete restrict,
-  team_id uuid references public.teams(id) on delete set null,
-  type text not null check(type in ('yellow','red')),
-  created_at timestamptz not null default now()
-);
-create table if not exists public.payments (
-  id uuid primary key default gen_random_uuid(),
-  athlete_id uuid not null references public.athletes(id) on delete restrict,
-  amount numeric(10,2) not null check(amount > 0),
-  reference text not null default 'Contribuição do baba',
-  method text not null default 'Manual',
-  status text not null default 'pending' check(status in ('paid','pending','failed','refunded')),
-  paid_at timestamptz,
-  provider text,
-  provider_payment_id text unique,
+
+-- ------------------------------------------------------------------------------
+-- 6. JUÍZES (Árbitros)
+-- ------------------------------------------------------------------------------
+create table if not exists public.juizes (
+  id serial primary key,
+  nome text not null,
+  telefone text,
+  foto_url text default '/default-player.png',
+  ativo boolean not null default true,
   created_at timestamptz not null default now()
 );
 
-create index if not exists athletes_team_idx on public.athletes(team_id);
-create index if not exists goals_athlete_idx on public.goals(athlete_id);
-create index if not exists cards_athlete_idx on public.cards(athlete_id);
-create index if not exists payments_athlete_idx on public.payments(athlete_id);
-create index if not exists matches_date_idx on public.matches(date);
+-- ------------------------------------------------------------------------------
+-- 7. PARTIDAS E SÚMULAS
+-- ------------------------------------------------------------------------------
+create table if not exists public.partidas (
+  id serial primary key,
+  data date not null,
+  hora time,
+  tipo text not null default 'Domingo' check (tipo in ('Domingo', 'Feriado', 'Especial')),
+  placar_a integer not null default 0 check (placar_a >= 0),
+  placar_b integer not null default 0 check (placar_b >= 0),
+  temporada_id integer not null references public.temporadas(id) on delete cascade,
+  time_a_id integer references public.times(id) on delete set null,
+  time_b_id integer references public.times(id) on delete set null,
+  status text not null default 'Agendada' check (status in ('Agendada', 'Finalizada', 'Cancelada')),
+  juiz_id integer references public.juizes(id) on delete set null,
+  created_at timestamptz not null default now(),
+  check (time_a_id is distinct from time_b_id)
+);
 
+-- Gols
+create table if not exists public.gols (
+  id serial primary key,
+  quantidade integer not null default 1 check (quantidade > 0),
+  minuto integer check (minuto between 1 and 150),
+  atleta_id integer not null references public.atletas(id) on delete restrict,
+  partida_id integer not null references public.partidas(id) on delete cascade,
+  time_id integer references public.times(id) on delete set null,
+  created_at timestamptz not null default now()
+);
+
+-- Assistências
+create table if not exists public.assistencias (
+  id serial primary key,
+  quantidade integer not null default 1 check (quantidade > 0),
+  atleta_id integer not null references public.atletas(id) on delete restrict,
+  partida_id integer not null references public.partidas(id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+
+-- Cartões
+create table if not exists public.cartoes (
+  id serial primary key,
+  tipo text not null check (tipo in ('Amarelo', 'Vermelho')),
+  atleta_id integer not null references public.atletas(id) on delete restrict,
+  partida_id integer not null references public.partidas(id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+
+-- Presenças (Confirmação e Súmula)
+create table if not exists public.presencas (
+  id serial primary key,
+  confirmado boolean not null default false,
+  atleta_id integer not null references public.atletas(id) on delete cascade,
+  partida_id integer not null references public.partidas(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  constraint uq_presenca_partida unique (atleta_id, partida_id)
+);
+
+-- ------------------------------------------------------------------------------
+-- 8. FINANCEIRO: MENSALIDADES E DESPESAS
+-- ------------------------------------------------------------------------------
+create table if not exists public.mensalidades (
+  id serial primary key,
+  mes integer not null check (mes between 1 and 12),
+  valor numeric(10,2) not null check (valor >= 0),
+  pago boolean not null default false,
+  data_pagamento timestamptz,
+  forma_pagamento text check (forma_pagamento in ('Pix', 'Dinheiro', 'Transferência', 'Outro')),
+  comprovante_url text,
+  atleta_id integer not null references public.atletas(id) on delete cascade,
+  temporada_id integer not null references public.temporadas(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  constraint uq_mensalidade_atleta_mes unique (atleta_id, temporada_id, mes)
+);
+
+create table if not exists public.despesas (
+  id serial primary key,
+  descricao text not null,
+  categoria text not null default 'Outros',
+  valor numeric(10,2) not null check (valor > 0),
+  data date not null default current_date,
+  temporada_id integer not null references public.temporadas(id) on delete cascade,
+  juiz_id integer references public.juizes(id) on delete set null,
+  comprovante_url text,
+  created_at timestamptz not null default now()
+);
+
+-- ------------------------------------------------------------------------------
+-- 9. AVISOS E COMUNICADOS OFICIAIS
+-- ------------------------------------------------------------------------------
+create table if not exists public.avisos (
+  id serial primary key,
+  titulo text not null,
+  conteudo text not null,
+  tipo text not null default 'Geral' check (tipo in ('Geral', 'Financeiro', 'Regra', 'Convocação')),
+  data_publicacao timestamptz not null default now(),
+  ativo boolean not null default true,
+  destaque boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+-- ------------------------------------------------------------------------------
+-- 10. ÍNDICES DE PERFORMANCE
+-- ------------------------------------------------------------------------------
+create index if not exists idx_atletas_temporada_season on public.atletas_temporada(temporada_id);
+create index if not exists idx_atletas_temporada_team on public.atletas_temporada(time_id);
+create index if not exists idx_partidas_season_date on public.partidas(temporada_id, data);
+create index if not exists idx_gols_partida on public.gols(partida_id);
+create index if not exists idx_gols_atleta on public.gols(atleta_id);
+create index if not exists idx_assistencias_partida on public.assistencias(partida_id);
+create index if not exists idx_assistencias_atleta on public.assistencias(atleta_id);
+create index if not exists idx_cartoes_partida on public.cartoes(partida_id);
+create index if not exists idx_cartoes_atleta on public.cartoes(atleta_id);
+create index if not exists idx_presencas_partida on public.presencas(partida_id);
+create index if not exists idx_mensalidades_status on public.mensalidades(temporada_id, mes, pago);
+create index if not exists idx_despesas_season on public.despesas(temporada_id);
+create index if not exists idx_avisos_ativo on public.avisos(ativo, destaque);
+
+-- ------------------------------------------------------------------------------
+-- 11. ROW LEVEL SECURITY (RLS)
+-- ------------------------------------------------------------------------------
 alter table public.admins enable row level security;
-alter table public.teams enable row level security;
-alter table public.athletes enable row level security;
-alter table public.matches enable row level security;
-alter table public.goals enable row level security;
-alter table public.cards enable row level security;
-alter table public.payments enable row level security;
+alter table public.temporadas enable row level security;
+alter table public.times enable row level security;
+alter table public.atletas enable row level security;
+alter table public.atletas_temporada enable row level security;
+alter table public.juizes enable row level security;
+alter table public.partidas enable row level security;
+alter table public.gols enable row level security;
+alter table public.assistencias enable row level security;
+alter table public.cartoes enable row level security;
+alter table public.presencas enable row level security;
+alter table public.mensalidades enable row level security;
+alter table public.despesas enable row level security;
+alter table public.avisos enable row level security;
 
--- Leitura pública dos dados esportivos.
-create policy "public read teams" on public.teams for select using (true);
-create policy "public read athletes" on public.athletes for select using (true);
-create policy "public read matches" on public.matches for select using (true);
-create policy "public read goals" on public.goals for select using (true);
-create policy "public read cards" on public.cards for select using (true);
--- O financeiro é privado: somente administradores consultam.
-create policy "admin read payments" on public.payments for select to authenticated using (public.is_admin());
-create policy "admin read admins" on public.admins for select to authenticated using (public.is_admin());
+-- Políticas de Leitura Pública (Qualquer visitante pode consultar dados esportivos)
+create policy "public_read_temporadas" on public.temporadas for select using (true);
+create policy "public_read_times" on public.times for select using (true);
+create policy "public_read_atletas" on public.atletas for select using (true);
+create policy "public_read_atletas_temporada" on public.atletas_temporada for select using (true);
+create policy "public_read_juizes" on public.juizes for select using (true);
+create policy "public_read_partidas" on public.partidas for select using (true);
+create policy "public_read_gols" on public.gols for select using (true);
+create policy "public_read_assistencias" on public.assistencias for select using (true);
+create policy "public_read_cartoes" on public.cartoes for select using (true);
+create policy "public_read_presencas" on public.presencas for select using (true);
+create policy "public_read_avisos" on public.avisos for select using (ativo = true or public.is_admin());
+create policy "public_read_despesas" on public.despesas for select using (true);
 
--- Escrita apenas por administradores autenticados.
-create policy "admin manage teams" on public.teams for all to authenticated using (public.is_admin()) with check (public.is_admin());
-create policy "admin manage athletes" on public.athletes for all to authenticated using (public.is_admin()) with check (public.is_admin());
-create policy "admin manage matches" on public.matches for all to authenticated using (public.is_admin()) with check (public.is_admin());
-create policy "admin manage goals" on public.goals for all to authenticated using (public.is_admin()) with check (public.is_admin());
-create policy "admin manage cards" on public.cards for all to authenticated using (public.is_admin()) with check (public.is_admin());
-create policy "admin manage payments" on public.payments for all to authenticated using (public.is_admin()) with check (public.is_admin());
+-- Mensalidades: visualização pública para transparência e confirmação de pagamento
+create policy "public_read_mensalidades" on public.mensalidades for select using (true);
 
--- Dados iniciais dos dois times. Pode alterar os nomes pelo painel após login.
-insert into public.teams(name,badge,color)
-select 'Time A','A','#75a88a' where not exists(select 1 from public.teams);
-insert into public.teams(name,badge,color)
-select 'Time B','B','#d5b46a' where (select count(*) from public.teams)=1;
+-- Permissão para atleta confirmar sua própria presença no próximo jogo
+create policy "public_insert_presencas" on public.presencas for insert with check (true);
+create policy "public_update_presencas" on public.presencas for update using (true);
+
+-- Políticas Administrativas (Apenas administradores autenticados com is_admin() = true podem modificar)
+create policy "admin_all_admins" on public.admins for all to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy "admin_all_temporadas" on public.temporadas for all to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy "admin_all_times" on public.times for all to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy "admin_all_atletas" on public.atletas for all to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy "admin_all_atletas_temporada" on public.atletas_temporada for all to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy "admin_all_juizes" on public.juizes for all to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy "admin_all_partidas" on public.partidas for all to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy "admin_all_gols" on public.gols for all to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy "admin_all_assistencias" on public.assistencias for all to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy "admin_all_cartoes" on public.cartoes for all to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy "admin_all_presencas" on public.presencas for all to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy "admin_all_mensalidades" on public.mensalidades for all to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy "admin_all_despesas" on public.despesas for all to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy "admin_all_avisos" on public.avisos for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+-- ------------------------------------------------------------------------------
+-- 12. DADOS INICIAIS (SEED)
+-- ------------------------------------------------------------------------------
+insert into public.temporadas (ano, valor_mensalidade_padrao, ativa)
+values (2026, 25.00, true)
+on conflict (ano) do nothing;
+
+do $$
+declare
+  v_temp_id integer;
+  v_time_a integer;
+  v_time_b integer;
+begin
+  select id into v_temp_id from public.temporadas where ano = 2026 limit 1;
+
+  if not exists (select 1 from public.times where temporada_id = v_temp_id) then
+    insert into public.times (nome, cor, badge, logo_url, temporada_id)
+    values ('Time A', '#75a88a', 'A', './public/escudo-baba-humildes-4k.png', v_temp_id)
+    returning id into v_time_a;
+
+    insert into public.times (nome, cor, badge, logo_url, temporada_id)
+    values ('Time B', '#d5b46a', 'B', './public/escudo-baba-humildes-4k.png', v_temp_id)
+    returning id into v_time_b;
+  end if;
+
+  if not exists (select 1 from public.avisos) then
+    insert into public.avisos (titulo, conteudo, tipo, destaque, ativo)
+    values (
+      'Temporada 2026 Oficialmente Iniciada!',
+      'Bem-vindos ao portal do Baba Humildes! Acompanhe aqui as partidas dos domingos, artilharia, assistências, cartões e prestação de contas.',
+      'Geral',
+      true,
+      true
+    );
+  end if;
+end $$;
