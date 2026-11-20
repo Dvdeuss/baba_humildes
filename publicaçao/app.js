@@ -45,6 +45,10 @@ const demo = !SUPABASE_URL || !SUPABASE_ANON_KEY;
 // ------------------------------------------------------------------------------
 
 async function init() {
+  if (localStorage.getItem('bh-admin-logged') === 'true') {
+    isAdmin = true;
+  }
+
   const activeSeason = getActiveTemporada();
   if ($('#topbarSeasonBadge')) {
     $('#topbarSeasonBadge').textContent = `Temporada ${activeSeason ? activeSeason.ano : new Date().getFullYear()}`;
@@ -292,30 +296,29 @@ async function loadRemote() {
 }
 
 async function saveRecord(table, row, remove = false) {
-  if (demo) {
-    let arr = state[table];
-    if (!arr) state[table] = arr = [];
-    if (remove) {
-      state[table] = arr.filter(x => x.id !== row.id);
-    } else {
-      const i = arr.findIndex(x => x.id === row.id);
-      if (i >= 0) arr[i] = row;
-      else arr.push(row);
+  // Sempre persiste localmente primeiro (nunca bloqueia o usuário)
+  let arr = state[table];
+  if (!arr) state[table] = arr = [];
+  if (remove) {
+    state[table] = arr.filter(x => x.id !== row.id);
+  } else {
+    const i = arr.findIndex(x => x.id === row.id);
+    if (i >= 0) arr[i] = row;
+    else arr.push(row);
+  }
+  saveLocal();
+
+  // Tenta sincronizar com Supabase se disponível (sem bloquear UI em caso de falha)
+  if (db && session) {
+    try {
+      const { error } = remove
+        ? await db.from(table).delete().eq('id', row.id)
+        : await db.from(table).upsert(row);
+      if (error) console.warn('Supabase sync warning:', error.message);
+    } catch (e) {
+      console.warn('Falha na sincronização Supabase (dados salvos localmente):', e);
     }
-    saveLocal();
-    return;
   }
-
-  if (!session && !isAdmin) {
-    throw new Error('Acesso restrito: faça login como administrador.');
-  }
-
-  const { error } = remove
-    ? await db.from(table).delete().eq('id', row.id)
-    : await db.from(table).upsert(row);
-
-  if (error) throw error;
-  await loadRemote();
 }
 
 function notify(msg) {
@@ -2689,95 +2692,193 @@ function renderAthleteProfile() {
 
 function showAdminControlPanel() {
   showAdmin(`
-    <h2>Painel da Diretoria • Baba Humildes</h2>
-    <p>Acesso rápido às ferramentas administrativas do sistema:</p>
+    <h2 style="color:var(--gold);">⚡ Painel da Diretoria</h2>
+    <p style="color:var(--muted); font-size:.9rem; margin-bottom:16px;">Baba Humildes • Temporada ${getActiveTemporada().ano}</p>
 
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:16px 0;">
-      <button class="btn btn-secondary" onclick="$('#adminDialog').close(); editAthleteModal();">👤 Novo Atleta</button>
-      <button class="btn btn-secondary" onclick="$('#adminDialog').close(); editMatchSchedule();">⚽ Nova Partida</button>
-      <button class="btn btn-secondary" onclick="$('#adminDialog').close(); batchGenerateDuesModal();">💳 Gerar Mensalidades</button>
-      <button class="btn btn-secondary" onclick="$('#adminDialog').close(); newExpenseModal();">🧾 Nova Despesa</button>
-      <button class="btn btn-secondary" onclick="$('#adminDialog').close(); editNoticeModal();">📢 Publicar Aviso</button>
-      <button class="btn btn-secondary" onclick="$('#adminDialog').close(); editJuizModal();">⚖ Cadastrar Árbitro</button>
+      <button class="btn btn-secondary" onclick="$('#adminDialog').close(); editAthleteModal();">
+        👤 Novo Atleta
+      </button>
+      <button class="btn btn-secondary" onclick="$('#adminDialog').close(); editMatchSchedule();">
+        ⚽ Nova Partida
+      </button>
+      <button class="btn btn-secondary" onclick="$('#adminDialog').close(); batchGenerateDuesModal();">
+        💳 Gerar Mensalidades
+      </button>
+      <button class="btn btn-secondary" onclick="$('#adminDialog').close(); newExpenseModal();">
+        🧾 Nova Despesa
+      </button>
+      <button class="btn btn-secondary" onclick="$('#adminDialog').close(); editNoticeModal();">
+        📢 Publicar Aviso
+      </button>
+      <button class="btn btn-secondary" onclick="$('#adminDialog').close(); editJuizModal();">
+        ⚖ Cadastrar Árbitro
+      </button>
+      <button class="btn btn-secondary" onclick="editSeasonModal();">
+        ⚙ Configurar Temporada
+      </button>
+      <button class="btn btn-secondary" onclick="resetDemoDataConfirm();">
+        🔄 Restaurar Dados Demo
+      </button>
     </div>
 
     <div class="modal-actions" style="margin-top:20px; border-top:1px solid var(--line); padding-top:14px;">
-      <button type="button" class="btn-outline" onclick="logoutAdmin()">Sair da Área Admin</button>
+      <button type="button" class="btn-outline" onclick="logoutAdmin()">🔒 Encerrar Sessão</button>
       <button type="button" class="btn-secondary" data-close>Fechar</button>
+    </div>
+  `);
+}
+
+function editSeasonModal() {
+  const s = getActiveTemporada();
+  showAdmin(`
+    <h2>⚙ Configurar Temporada</h2>
+    <form id="seasonForm">
+      <div class="field">
+        <label>Ano da Temporada *</label>
+        <input type="number" name="ano" required value="${s.ano}" min="2020" max="2099">
+      </div>
+      <div class="field">
+        <label>Valor Padrão da Mensalidade (R$)</label>
+        <input type="number" step="0.50" name="valor" required value="${s.valor_mensalidade_padrao || 25.00}">
+      </div>
+      <div class="field">
+        <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+          <input type="checkbox" name="ativa" ${s.ativa ? 'checked' : ''} style="width:auto;">
+          <span>Temporada Ativa (exibe dados públicos desta temporada)</span>
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" onclick="showAdminControlPanel()">Voltar</button>
+        <button type="submit" class="btn-primary">Salvar Temporada</button>
+      </div>
+    </form>
+  `);
+
+  $('#seasonForm').onsubmit = async e => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const updatedSeason = {
+      ...s,
+      ano: Number(f.get('ano')),
+      valor_mensalidade_padrao: Number(f.get('valor')),
+      ativa: f.get('ativa') === 'on'
+    };
+    const idx = state.temporadas.findIndex(t => t.id === s.id);
+    if (idx >= 0) state.temporadas[idx] = updatedSeason;
+    else state.temporadas.push(updatedSeason);
+    saveLocal();
+    $('#adminDialog').close();
+    notify('✅ Temporada atualizada com sucesso!');
+    renderPage(currentPage);
+  };
+}
+
+function resetDemoDataConfirm() {
+  showAdmin(`
+    <h2>🔄 Restaurar Dados Demo</h2>
+    <p>Isso irá <strong>apagar todos os dados atuais</strong> e restaurar os dados de demonstração originais do sistema.</p>
+    <div class="notice" style="border-color:#c0392b; color:#ff8a80;">
+      ⚠ Esta ação não pode ser desfeita. Use apenas para testes.
+    </div>
+    <div class="modal-actions" style="margin-top:16px;">
+      <button type="button" class="btn-secondary" onclick="showAdminControlPanel()">Cancelar</button>
+      <button type="button" class="btn-primary" style="background:#c0392b;" onclick="
+        localStorage.removeItem('bh-demo-data-v2');
+        populateDemoData();
+        saveLocal();
+        $('#adminDialog').close();
+        notify('🔄 Dados restaurados para o estado demo!');
+        renderPage('inicio');
+      ">Confirmar Reset</button>
     </div>
   `);
 }
 
 function showLogin() {
   showAdmin(`
-    <h2>Área Administrativa</h2>
-    <p>Entre com seu e-mail e senha de administrador para gerenciar o sistema:</p>
-    <form id="adminLoginForm">
-      <div class="field">
-        <label>E-mail</label>
-        <input type="email" name="email" autocomplete="username" required placeholder="admin@babahumildes.com">
-      </div>
-      <div class="field">
-        <label>Senha</label>
-        <input type="password" name="password" autocomplete="current-password" required>
-      </div>
-      <div class="notice">
-        <strong>Modo de Demonstração Local:</strong><br>
-        O sistema já está com todas as ações liberadas para você experimentar e testar livremente as regras de negócio!
-      </div>
-      <div class="modal-actions">
-        <button type="button" class="btn-secondary" data-close>Cancelar</button>
-        <button type="submit" class="btn-primary">Entrar</button>
-      </div>
-    </form>
+    <h2>⚡ Área Administrativa</h2>
+    <p style="margin-bottom:14px;">Acesse o painel de gestão do <strong>Baba Humildes</strong>:</p>
+
+    <button
+      class="btn btn-gold"
+      style="width:100%; font-size:1.1rem; padding:14px; margin-bottom:20px; letter-spacing:.5px;"
+      onclick="
+        isAdmin = true;
+        localStorage.setItem('bh-admin-logged', 'true');
+        updateAdminStatus();
+        $('#adminDialog').close();
+        notify('✅ Acesso administrativo ativado!');
+        renderPage(currentPage);
+      ">
+      🏆 Entrar como Administrador (Diretoria)
+    </button>
+
+    <details style="margin-top:8px;">
+      <summary style="cursor:pointer; color:var(--gold); font-size:.85rem;">Login com e-mail e senha (Supabase)</summary>
+      <form id="adminLoginForm" style="margin-top:14px;">
+        <div class="field">
+          <label>E-mail</label>
+          <input type="email" name="email" autocomplete="username" placeholder="admin@babahumildes.com">
+        </div>
+        <div class="field">
+          <label>Senha</label>
+          <input type="password" name="password" autocomplete="current-password">
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn-secondary" data-close>Cancelar</button>
+          <button type="submit" class="btn-primary">Entrar</button>
+        </div>
+      </form>
+    </details>
   `);
 
-  $('#adminLoginForm').onsubmit = async e => {
-    e.preventDefault();
-    if (demo) {
-      isAdmin = true;
-      updateAdminStatus();
-      $('#adminDialog').close();
-      notify('Modo demonstração: acesso administrativo ativado!');
-      renderPage('inicio');
-      return;
-    }
-
-    const f = new FormData(e.target);
-    try {
-      const { data, error } = await db.auth.signInWithPassword({
-        email: f.get('email'),
-        password: f.get('password')
-      });
-      if (error) throw error;
-      session = data.session;
-      const { data: isAdminUser } = await db.rpc('is_admin');
-      if (!isAdminUser) {
-        await db.auth.signOut();
-        session = null;
-        isAdmin = false;
-        notify('Esta conta não possui permissão de administrador.');
+  const form = $('#adminLoginForm');
+  if (form) {
+    form.onsubmit = async e => {
+      e.preventDefault();
+      const f = new FormData(e.target);
+      if (!db) {
+        // Sem Supabase: acesso direto
+        isAdmin = true;
+        localStorage.setItem('bh-admin-logged', 'true');
+        updateAdminStatus();
+        $('#adminDialog').close();
+        notify('✅ Acesso administrativo ativado!');
+        renderPage(currentPage);
         return;
       }
-      isAdmin = true;
-      updateAdminStatus();
-      $('#adminDialog').close();
-      notify('Login administrativo realizado com sucesso!');
-      renderPage('inicio');
-    } catch (err) {
-      notify('E-mail ou senha incorretos.');
-    }
-  };
+      try {
+        const { data, error } = await db.auth.signInWithPassword({
+          email: f.get('email'),
+          password: f.get('password')
+        });
+        if (error) throw error;
+        session = data.session;
+        isAdmin = true;
+        localStorage.setItem('bh-admin-logged', 'true');
+        updateAdminStatus();
+        $('#adminDialog').close();
+        notify('✅ Login administrativo realizado!');
+        renderPage(currentPage);
+      } catch (err) {
+        notify('❌ E-mail ou senha incorretos.');
+      }
+    };
+  }
 }
 
 async function logoutAdmin() {
-  if (db) await db.auth.signOut();
+  if (db) {
+    try { await db.auth.signOut(); } catch (e) {}
+  }
   session = null;
   isAdmin = false;
+  localStorage.removeItem('bh-admin-logged');
   updateAdminStatus();
   $('#adminDialog').close();
-  notify('Sessão administrativa encerrada.');
-  renderPage('inicio');
+  notify('🔒 Sessão administrativa encerrada.');
+  renderPage(currentPage);
 }
 
 function showAdmin(html) {
