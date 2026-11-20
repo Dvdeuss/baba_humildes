@@ -1975,14 +1975,19 @@ function renderFinance() {
                     <td>Mês ${String(m.mes).padStart(2,'0')}/${activeSeason.ano}</td>
                     <td>${money(m.valor || 25)}</td>
                     <td>
-                      <span class="pill ${m.pago ? '' : 'pending'}">${m.pago ? 'Pago' : 'Pendente'}</span>
+                      ${isAdmin
+                        ? `<button class="pill ${m.pago ? '' : 'pending'}" style="border:none; cursor:pointer; background:none; padding:0;" onclick="togglePaymentStatus('${m.id}')" title="${m.pago ? 'Clique para reverter' : 'Clique para registrar pagamento'}">
+                            ${m.pago ? '✅ Pago' : '⏳ Pendente'}
+                          </button>`
+                        : `<span class="pill ${m.pago ? '' : 'pending'}">${m.pago ? '✅ Pago' : 'Pendente'}</span>`
+                      }
                     </td>
                     <td>${m.forma_pagamento || '—'}</td>
                     <td>${m.comprovante_url ? `<a href="${m.comprovante_url}" target="_blank" style="color:var(--gold);">Ver arquivo ↗</a>` : '—'}</td>
                     ${isAdmin ? `
                       <td style="text-align:right;">
-                        <button class="btn btn-outline" style="padding:4px 8px; font-size:10px;" onclick="togglePaymentStatus('${m.id}')">
-                          ${m.pago ? 'Desmarcar' : 'Dar Baixa ✓'}
+                        <button class="btn btn-outline" style="padding:4px 10px; font-size:11px;" onclick="togglePaymentStatus('${m.id}')">
+                          ${m.pago ? '↩ Reverter' : '✅ Dar Baixa'}
                         </button>
                       </td>
                     ` : ''}
@@ -2152,16 +2157,66 @@ function renderFinance() {
 async function togglePaymentStatus(duesId) {
   const due = state.mensalidades.find(m => m.id === duesId);
   if (!due) return;
-  due.pago = !due.pago;
-  due.data_pagamento = due.pago ? new Date().toISOString() : null;
-  due.forma_pagamento = due.pago ? 'Pix' : null;
-  try {
+  if (due.pago) {
+    // Reverter para pendente — confirmação simples
+    if (!confirm('Reverter este pagamento para Pendente?')) return;
+    due.pago = false;
+    due.data_pagamento = null;
+    due.forma_pagamento = null;
     await saveRecord('mensalidades', due);
-    notify(due.pago ? 'Pagamento confirmado!' : 'Status revertido para pendente.');
+    notify('Status revertido para pendente.');
     renderPage('financeiro');
-  } catch (err) {
-    notify(err.message);
+  } else {
+    // Abrir modal de confirmação de pagamento com forma e data
+    registerPaymentModal(duesId);
   }
+}
+
+function registerPaymentModal(duesId) {
+  const due = state.mensalidades.find(m => m.id === duesId);
+  if (!due) return;
+  const a = state.athletes.find(x => x.id === due.atleta_id);
+  const activeSeason = getActiveTemporada();
+  const today = new Date().toISOString().split('T')[0];
+
+  showAdmin(`
+    <h2>✅ Registrar Pagamento</h2>
+    <p>
+      <strong>${a ? esc(a.apelido) : 'Atleta'}</strong> —
+      Mês ${String(due.mes).padStart(2,'0')}/${activeSeason.ano} •
+      <span style="color:var(--gold); font-weight:700;">${money(due.valor || 25)}</span>
+    </p>
+
+    <form id="paymentForm">
+      <div class="field">
+        <label>Forma de Pagamento *</label>
+        <select name="forma" required>
+          <option value="Pix">💳 Pix</option>
+          <option value="Dinheiro">💵 Dinheiro</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Data do Pagamento *</label>
+        <input type="date" name="data" required value="${today}">
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" data-close>Cancelar</button>
+        <button type="submit" class="btn-primary">✅ Confirmar Pagamento</button>
+      </div>
+    </form>
+  `);
+
+  $('#paymentForm').onsubmit = async e => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    due.pago = true;
+    due.data_pagamento = f.get('data');
+    due.forma_pagamento = f.get('forma');
+    await saveRecord('mensalidades', due);
+    $('#adminDialog').close();
+    notify(`✅ Pagamento de ${a ? a.apelido : 'atleta'} confirmado via ${f.get('forma')}!`);
+    renderPage('financeiro');
+  };
 }
 
 function batchGenerateDuesModal() {
@@ -2989,6 +3044,7 @@ Object.assign(window, {
   newExpenseModal,
   deleteExpenseAction,
   togglePaymentStatus,
+  registerPaymentModal,
 
   // Avisos
   editNoticeModal,
