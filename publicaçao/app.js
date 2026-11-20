@@ -282,18 +282,54 @@ function populateDemoData() {
 
 async function loadRemote() {
   if (!db) return;
-  const tables = ['temporadas', 'times', 'atletas', 'atletas_temporada', 'juizes', 'partidas', 'gols', 'assistencias', 'cartoes', 'presencas', 'mensalidades', 'despesas', 'avisos'];
-  for (const t of tables) {
+
+  // Mapa: chave do state local → nome da tabela no Supabase
+  const tableMap = {
+    temporadas:        'temporadas',
+    teams:             'times',
+    athletes:          'atletas',
+    athletes_temporada:'atletas_temporada',
+    juizes:            'juizes',
+    matches:           'partidas',
+    goals:             'gols',
+    assistencias:      'assistencias',
+    cards:             'cartoes',
+    presencas:         'presencas',
+    mensalidades:      'mensalidades',
+    despesas:          'despesas',
+    avisos:            'avisos',
+  };
+
+  for (const [stateKey, tableName] of Object.entries(tableMap)) {
     try {
-      const { data, error } = await db.from(t).select('*');
-      if (!error && data) {
-        state[t] = data;
+      const { data, error } = await db.from(tableName).select('*');
+      if (!error && data && data.length > 0) {
+        state[stateKey] = data;
       }
+      // 404 / table not found: ignora silenciosamente, mantém dados locais
     } catch (e) {
-      console.warn(`Erro ao carregar tabela ${t}:`, e);
+      // Supabase inacessível ou tabela inexistente — continua com dados locais
     }
   }
+  ensureInterGremioTeams();
 }
+
+// Mapa reverso: chave local → tabela Supabase (para saveRecord)
+const SUPABASE_TABLE_MAP = {
+  temporadas:        'temporadas',
+  teams:             'times',
+  athletes:          'atletas',
+  athletes_temporada:'atletas_temporada',
+  juizes:            'juizes',
+  matches:           'partidas',
+  goals:             'gols',
+  assistencias:      'assistencias',
+  cards:             'cartoes',
+  presencas:         'presencas',
+  mensalidades:      'mensalidades',
+  despesas:          'despesas',
+  avisos:            'avisos',
+};
 
 async function saveRecord(table, row, remove = false) {
   // Sempre persiste localmente primeiro (nunca bloqueia o usuário)
@@ -310,10 +346,11 @@ async function saveRecord(table, row, remove = false) {
 
   // Tenta sincronizar com Supabase se disponível (sem bloquear UI em caso de falha)
   if (db && session) {
+    const supabaseTable = SUPABASE_TABLE_MAP[table] || table;
     try {
       const { error } = remove
-        ? await db.from(table).delete().eq('id', row.id)
-        : await db.from(table).upsert(row);
+        ? await db.from(supabaseTable).delete().eq('id', row.id)
+        : await db.from(supabaseTable).upsert(row);
       if (error) console.warn('Supabase sync warning:', error.message);
     } catch (e) {
       console.warn('Falha na sincronização Supabase (dados salvos localmente):', e);
