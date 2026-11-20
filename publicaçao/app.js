@@ -2783,16 +2783,18 @@ function resetDemoDataConfirm() {
     </div>
     <div class="modal-actions" style="margin-top:16px;">
       <button type="button" class="btn-secondary" onclick="showAdminControlPanel()">Cancelar</button>
-      <button type="button" class="btn-primary" style="background:#c0392b;" onclick="
-        localStorage.removeItem('bh-demo-data-v2');
-        populateDemoData();
-        saveLocal();
-        $('#adminDialog').close();
-        notify('🔄 Dados restaurados para o estado demo!');
-        renderPage('inicio');
-      ">Confirmar Reset</button>
+      <button type="button" id="confirmResetBtn" class="btn-primary" style="background:#c0392b;">Confirmar Reset</button>
     </div>
   `);
+
+  $('#confirmResetBtn').onclick = () => {
+    localStorage.removeItem('bh-demo-data-v2');
+    populateDemoData();
+    saveLocal();
+    $('#adminDialog').close();
+    notify('🔄 Dados restaurados para o estado demo!');
+    renderPage('inicio');
+  };
 }
 
 function showLogin() {
@@ -2899,4 +2901,105 @@ init().catch(err => {
   updateAdminStatus();
   bindNavigation();
   renderPage('inicio');
+});
+
+// ==============================================================================
+// EXPOSIÇÃO GLOBAL — Necessário porque app.js é carregado como type="module"
+// Funções chamadas via onclick="" em HTML dinâmico precisam estar no window
+// ==============================================================================
+
+// Expõe o seletor $ ao window para uso em onclick inline do painel admin
+window.$ = $;
+
+// Funções de edição de times (stub enquanto modal completo não está implementado)
+function editTeamModal(teamId = '') {
+  const t = teamId ? state.teams.find(x => x.id === teamId) : {};
+  showEdit(`
+    <h2>${t.id ? 'Editar Time' : 'Novo Time'}</h2>
+    <form id="teamForm">
+      <div class="field">
+        <label>Nome do Time *</label>
+        <input name="nome" required value="${esc(t.nome || '')}" placeholder="Ex: Internacional">
+      </div>
+      <div class="field">
+        <label>Cor principal (hex)</label>
+        <input name="cor" value="${esc(t.cor || '#cccccc')}" placeholder="#e52329">
+      </div>
+      <div class="field">
+        <label>Sigla (badge)</label>
+        <input name="badge" value="${esc(t.badge || '')}" maxlength="3" placeholder="INT">
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" data-close>Cancelar</button>
+        <button type="submit" class="btn-primary">Salvar Time</button>
+      </div>
+    </form>
+  `);
+  $('#teamForm').onsubmit = async e => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const teamData = {
+      id: t.id || id(),
+      nome: f.get('nome').trim(),
+      cor: f.get('cor').trim(),
+      badge: f.get('badge').trim().toUpperCase(),
+      logo_url: t.logo_url || '',
+      temporada_id: getActiveTemporada().id
+    };
+    await saveRecord('teams', teamData);
+    $('#editDialog').close();
+    notify('Time salvo!');
+    renderPage('times');
+  };
+}
+
+Object.assign(window, {
+  // Navegação
+  renderPage,
+
+  // Painel Admin e autenticação
+  showAdminControlPanel,
+  showLogin,
+  logoutAdmin,
+  editSeasonModal,
+  resetDemoDataConfirm,
+
+  // Atletas
+  editAthleteModal,
+  deleteAthleteAction,
+  openWhatsAppCardModal,
+  showAthleteSelector,
+
+  // Times
+  editTeamModal,
+
+  // Partidas e Súmula
+  editMatchSchedule,
+  openSumulaModal,
+  addGoalModal,
+  addCardModal,
+  removeGoalAction,
+  removeCardAction,
+  toggleFinishMatch,
+  toggleAttendanceAdmin,
+  openPublicAttendanceModal,
+
+  // Financeiro
+  batchGenerateDuesModal,
+  newExpenseModal,
+  deleteExpenseAction,
+  togglePaymentStatus,
+
+  // Avisos
+  editNoticeModal,
+  deleteNoticeAction,
+
+  // Juízes
+  editJuizModal,
+  deleteJuizAction,
+
+  // Utilitários internos usados em onclick inline
+  populateDemoData,
+  saveLocal,
+  notify,
 });
