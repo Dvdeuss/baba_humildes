@@ -295,11 +295,11 @@ begin
 
   if not exists (select 1 from public.times where temporada_id = v_temp_id) then
     insert into public.times (nome, cor, badge, logo_url, temporada_id)
-    values ('Time A', '#75a88a', 'A', './public/escudo-baba-humildes-4k.png', v_temp_id)
+    values ('Internacional', '#e52329', 'INT', './public/escudo-internacional.svg', v_temp_id)
     returning id into v_time_a;
 
     insert into public.times (nome, cor, badge, logo_url, temporada_id)
-    values ('Time B', '#d5b46a', 'B', './public/escudo-baba-humildes-4k.png', v_temp_id)
+    values ('Grêmio', '#0d80bf', 'GRE', './public/escudo-gremio.svg', v_temp_id)
     returning id into v_time_b;
   end if;
 

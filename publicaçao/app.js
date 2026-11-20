@@ -22,8 +22,8 @@ let state = {
     { id: 1, ano: 2026, valor_mensalidade_padrao: 25.00, ativa: true }
   ],
   teams: [
-    { id: 'team-a', nome: 'Time A', cor: '#75a88a', badge: 'A', logo_url: './public/escudo-baba-humildes-4k.png', temporada_id: 1 },
-    { id: 'team-b', nome: 'Time B', cor: '#d5b46a', badge: 'B', logo_url: './public/escudo-baba-humildes-4k.png', temporada_id: 1 }
+    { id: 'team-a', nome: 'Internacional', cor: '#e52329', badge: 'INT', logo_url: './public/escudo-internacional.svg', temporada_id: 1 },
+    { id: 'team-b', nome: 'Grêmio', cor: '#0d80bf', badge: 'GRE', logo_url: './public/escudo-gremio.svg', temporada_id: 1 }
   ],
   athletes: [],
   athletes_temporada: [],
@@ -97,11 +97,29 @@ function loadLocal() {
     const saved = JSON.parse(localStorage.getItem('bh-demo-data-v2'));
     if (saved && saved.athletes && saved.athletes.length > 0) {
       state = { ...state, ...saved };
+      ensureInterGremioTeams();
       return;
     }
   } catch (e) {}
   populateDemoData();
   saveLocal();
+}
+
+function ensureInterGremioTeams() {
+  const teamA = state.teams.find(t => t.id === 'team-a');
+  if (teamA) {
+    teamA.nome = 'Internacional';
+    teamA.cor = '#e52329';
+    teamA.badge = 'INT';
+    teamA.logo_url = './public/escudo-internacional.svg';
+  }
+  const teamB = state.teams.find(t => t.id === 'team-b');
+  if (teamB) {
+    teamB.nome = 'Grêmio';
+    teamB.cor = '#0d80bf';
+    teamB.badge = 'GRE';
+    teamB.logo_url = './public/escudo-gremio.svg';
+  }
 }
 
 function saveLocal() {
@@ -114,8 +132,8 @@ function populateDemoData() {
   ];
 
   state.teams = [
-    { id: 'team-a', nome: 'Time A (Verde)', cor: '#75a88a', badge: 'A', logo_url: './public/escudo-baba-humildes-4k.png', temporada_id: 1 },
-    { id: 'team-b', nome: 'Time B (Dourado)', cor: '#d5b46a', badge: 'B', logo_url: './public/escudo-baba-humildes-4k.png', temporada_id: 1 }
+    { id: 'team-a', nome: 'Internacional', cor: '#e52329', badge: 'INT', logo_url: './public/escudo-internacional.svg', temporada_id: 1 },
+    { id: 'team-b', nome: 'Grêmio', cor: '#0d80bf', badge: 'GRE', logo_url: './public/escudo-gremio.svg', temporada_id: 1 }
   ];
 
   state.juizes = [
@@ -645,6 +663,37 @@ function renderHome() {
       </div>
     ` : ''}
 
+    <!-- O GRANDE CONFRONTO - CLÁSSICO GRENAL DO BABA -->
+    <section class="home-matchup">
+      <div class="matchup-heading">
+        <span class="eyebrow">NOSSA RIVALIDADE HISTÓRICA</span>
+        <h2>O Grande Clássico do Baba</h2>
+        <p>Dois lados. Uma só paixão todo domingo na Palestina.</p>
+      </div>
+
+      <div class="matchup-teams">
+        <div class="matchup-team">
+          <div class="matchup-logo">
+            <img src="./public/escudo-internacional.svg" alt="Escudo Internacional">
+          </div>
+          <h3 style="color:#e52329;">Internacional</h3>
+          <span style="color:#e52329;">COLORADO • TIME A</span>
+        </div>
+
+        <div class="matchup-vs">VS</div>
+
+        <div class="matchup-team">
+          <div class="matchup-logo">
+            <img src="./public/escudo-gremio.svg" alt="Escudo Grêmio">
+          </div>
+          <h3 style="color:#0d80bf;">Grêmio</h3>
+          <span style="color:#0d80bf;">TRICOLOR • TIME B</span>
+        </div>
+      </div>
+
+      <button class="text-button" data-goto="times">Ver histórico e elencos dos dois times →</button>
+    </section>
+
     <section class="stats-grid">
       <div class="stat-card">
         <div class="stat-label">ELENCO DA TEMPORADA</div>
@@ -787,12 +836,16 @@ function renderNextMatchCard(match) {
       </div>
 
       <div style="display:flex; align-items:center; justify-content:space-around; background:#0f1a14; padding:18px; border-radius:10px; border:1px solid var(--line); margin-bottom:15px;">
-        <div style="text-align:center;">
-          <strong style="font:800 22px var(--display); color:${teamA.cor};">${esc(teamA.nome)}</strong>
+        <div style="display:flex; flex-direction:column; align-items:center; gap:6px;">
+          ${teamA.logo_url ? `<img src="${esc(teamA.logo_url)}" alt="${esc(teamA.nome)}" style="width:52px; height:52px; object-fit:contain; filter:drop-shadow(0 4px 6px #0007);">` : ''}
+          <strong style="font:800 20px var(--display); color:${teamA.cor};">${esc(teamA.nome)}</strong>
+          <span style="font-size:9px; color:var(--muted); letter-spacing:1px;">MANDANTE</span>
         </div>
-        <div style="font:800 26px var(--display); color:var(--muted);">VS</div>
-        <div style="text-align:center;">
-          <strong style="font:800 22px var(--display); color:${teamB.cor};">${esc(teamB.nome)}</strong>
+        <div style="font:800 28px var(--display); color:var(--gold);">VS</div>
+        <div style="display:flex; flex-direction:column; align-items:center; gap:6px;">
+          ${teamB.logo_url ? `<img src="${esc(teamB.logo_url)}" alt="${esc(teamB.nome)}" style="width:52px; height:52px; object-fit:contain; filter:drop-shadow(0 4px 6px #0007);">` : ''}
+          <strong style="font:800 20px var(--display); color:${teamB.cor};">${esc(teamB.nome)}</strong>
+          <span style="font-size:9px; color:var(--muted); letter-spacing:1px;">VISITANTE</span>
         </div>
       </div>
 
@@ -1066,8 +1119,8 @@ function renderTeams() {
               <td class="standings-pos">${idx + 1}º</td>
               <td>
                 <div style="display:flex; align-items:center; gap:10px;">
-                  <div class="team-badge" style="width:34px; height:38px; font-size:12px; border:1px solid ${row.team.cor}; color:${row.team.cor};">
-                    ${row.team.badge}
+                  <div style="width:34px; height:34px; display:flex; align-items:center; justify-content:center;">
+                    ${row.team.logo_url ? `<img src="${esc(row.team.logo_url)}" alt="${esc(row.team.nome)}" style="width:100%; height:100%; object-fit:contain;">` : `<span class="team-badge" style="border:1px solid ${row.team.cor}; color:${row.team.cor};">${row.team.badge}</span>`}
                   </div>
                   <div>
                     <strong style="font-size:13px; color:${row.team.cor};">${esc(row.team.nome)}</strong>
@@ -1103,12 +1156,12 @@ function renderTeams() {
         return `
           <div class="panel">
             <div class="panel-heading" style="border-bottom:1px solid var(--line); padding-bottom:12px;">
-              <div style="display:flex; align-items:center; gap:12px;">
-                <div class="team-badge" style="width:40px; height:44px; border:1px solid ${t.cor}; color:${t.cor};">
-                  ${t.badge}
+              <div style="display:flex; align-items:center; gap:14px;">
+                <div style="width:52px; height:52px; display:flex; align-items:center; justify-content:center;">
+                  ${t.logo_url ? `<img src="${esc(t.logo_url)}" alt="${esc(t.nome)}" style="width:100%; height:100%; object-fit:contain; filter:drop-shadow(0 4px 6px #0007);">` : `<span class="team-badge" style="border:1px solid ${t.cor}; color:${t.cor};">${t.badge}</span>`}
                 </div>
                 <div>
-                  <h3 style="margin:0; font:800 20px var(--display); color:${t.cor};">${esc(t.nome)}</h3>
+                  <h3 style="margin:0; font:800 22px var(--display); color:${t.cor};">${esc(t.nome)}</h3>
                   <small style="color:var(--muted);">${teamAthletes.length} atletas inscritos</small>
                 </div>
               </div>
@@ -1162,14 +1215,16 @@ function renderMatches() {
           </div>
 
           <div class="scoreline" style="background:#0e1913; border:1px solid var(--line); border-radius:10px;">
-            <div style="flex:1; text-align:right;">
-              <div style="font:800 24px var(--display); color:${tA.cor};">${esc(tA.nome)}</div>
+            <div style="flex:1; display:flex; align-items:center; justify-content:flex-end; gap:12px;">
+              <span style="font:800 24px var(--display); color:${tA.cor};">${esc(tA.nome)}</span>
+              ${tA.logo_url ? `<img src="${esc(tA.logo_url)}" alt="${esc(tA.nome)}" style="width:38px; height:38px; object-fit:contain; filter:drop-shadow(0 4px 6px #0006);">` : ''}
             </div>
             <strong style="font:800 38px var(--display); padding:0 20px; color:${isFin ? '#fff' : 'var(--muted)'};">
               ${m.placar_a} <span style="font-size:20px; color:var(--muted);">×</span> ${m.placar_b}
             </strong>
-            <div style="flex:1; text-align:left;">
-              <div style="font:800 24px var(--display); color:${tB.cor};">${esc(tB.nome)}</div>
+            <div style="flex:1; display:flex; align-items:center; justify-content:flex-start; gap:12px;">
+              ${tB.logo_url ? `<img src="${esc(tB.logo_url)}" alt="${esc(tB.nome)}" style="width:38px; height:38px; object-fit:contain; filter:drop-shadow(0 4px 6px #0006);">` : ''}
+              <span style="font:800 24px var(--display); color:${tB.cor};">${esc(tB.nome)}</span>
             </div>
           </div>
 
@@ -1343,9 +1398,15 @@ function openSumulaModal(matchId) {
       </div>
 
       <div class="scoreline" style="margin:12px 0 6px;">
-        <div style="flex:1; text-align:right;"><span style="color:${tA.cor}; font:800 22px var(--display);">${esc(tA.nome)}</span></div>
+        <div style="flex:1; display:flex; align-items:center; justify-content:flex-end; gap:10px;">
+          <span style="color:${tA.cor}; font:800 22px var(--display);">${esc(tA.nome)}</span>
+          ${tA.logo_url ? `<img src="${esc(tA.logo_url)}" alt="${esc(tA.nome)}" style="width:34px; height:34px; object-fit:contain;">` : ''}
+        </div>
         <strong style="font:800 36px var(--display); padding:0 16px;">${m.placar_a} × ${m.placar_b}</strong>
-        <div style="flex:1; text-align:left;"><span style="color:${tB.cor}; font:800 22px var(--display);">${esc(tB.nome)}</span></div>
+        <div style="flex:1; display:flex; align-items:center; justify-content:flex-start; gap:10px;">
+          ${tB.logo_url ? `<img src="${esc(tB.logo_url)}" alt="${esc(tB.nome)}" style="width:34px; height:34px; object-fit:contain;">` : ''}
+          <span style="color:${tB.cor}; font:800 22px var(--display);">${esc(tB.nome)}</span>
+        </div>
       </div>
       <div style="text-align:center; font-size:10px; color:var(--muted);">
         O placar é atualizado automaticamente conforme os gols são adicionados.
