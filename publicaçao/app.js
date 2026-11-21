@@ -111,6 +111,25 @@ function loadLocal() {
     const saved = JSON.parse(localStorage.getItem('bh-demo-data-v2'));
     if (saved && saved.athletes && saved.athletes.length > 0) {
       state = { ...state, ...saved };
+      if (!state.goals || state.goals.length === 0) {
+        state.goals = [
+          { id: 'g-1', match_id: 'm-1', athlete_id: state.athletes[0]?.id || 'a-1', minute: 15, team_id: 'team-a' },
+          { id: 'g-2', match_id: 'm-1', athlete_id: state.athletes[2]?.id || 'a-3', minute: 28, team_id: 'team-a' },
+          { id: 'g-3', match_id: 'm-1', athlete_id: state.athletes[0]?.id || 'a-1', minute: 42, team_id: 'team-a' },
+          { id: 'g-4', match_id: 'm-1', athlete_id: state.athletes[1]?.id || 'a-2', minute: 30, team_id: 'team-b' },
+          { id: 'g-5', match_id: 'm-1', athlete_id: state.athletes[7]?.id || 'a-8', minute: 50, team_id: 'team-b' },
+          { id: 'g-6', match_id: 'm-2', athlete_id: state.athletes[1]?.id || 'a-2', minute: 20, team_id: 'team-b' },
+          { id: 'g-7', match_id: 'm-2', athlete_id: state.athletes[9]?.id || 'a-10', minute: 45, team_id: 'team-a' }
+        ];
+      }
+      if (!state.assistencias || state.assistencias.length === 0) {
+        state.assistencias = [
+          { id: 'as-1', match_id: 'm-1', athlete_id: state.athletes[9]?.id || 'a-10' },
+          { id: 'as-2', match_id: 'm-1', athlete_id: state.athletes[0]?.id || 'a-1' },
+          { id: 'as-3', match_id: 'm-1', athlete_id: state.athletes[8]?.id || 'a-9' },
+          { id: 'as-4', match_id: 'm-2', athlete_id: state.athletes[2]?.id || 'a-3' }
+        ];
+      }
       ensureInterGremioTeams();
       return;
     }
@@ -938,6 +957,37 @@ function getTopAssists(limit = 10) {
     .map(([aid, assists]) => ({ athlete: state.athletes.find(a => a.id === aid), assists }))
     .filter(x => x.athlete)
     .sort((a, b) => b.assists - a.assists)
+    .slice(0, limit);
+}
+
+function getOverallStats(limit = 50) {
+  const map = {};
+  for (const a of state.athletes) {
+    map[a.id] = { athlete: a, goals: 0, assists: 0, total: 0 };
+  }
+  for (const g of state.goals) {
+    if (!map[g.athlete_id]) {
+      const a = state.athletes.find(x => x.id === g.athlete_id);
+      if (a) map[g.athlete_id] = { athlete: a, goals: 0, assists: 0, total: 0 };
+    }
+    if (map[g.athlete_id]) {
+      map[g.athlete_id].goals += (g.quantidade || 1);
+    }
+  }
+  for (const as of state.assistencias) {
+    if (!map[as.athlete_id]) {
+      const a = state.athletes.find(x => x.id === as.athlete_id);
+      if (a) map[as.athlete_id] = { athlete: a, goals: 0, assists: 0, total: 0 };
+    }
+    if (map[as.athlete_id]) {
+      map[as.athlete_id].assists += (as.quantidade || 1);
+    }
+  }
+  const all = Object.values(map).map(x => ({ ...x, total: x.goals + x.assists }));
+  const withStats = all.filter(x => x.total > 0 || x.goals > 0 || x.assists > 0);
+  const result = withStats.length > 0 ? withStats : all;
+  return result
+    .sort((a, b) => b.total - a.total || b.goals - a.goals || b.assists - a.assists || a.athlete.apelido.localeCompare(b.athlete.apelido))
     .slice(0, limit);
 }
 
@@ -1843,11 +1893,107 @@ async function toggleAttendanceAdmin(matchId, athleteId, status) {
  */
 function renderStats() {
   const activeSeason = getActiveTemporada();
-  let tab = 'artilharia';
+  let tab = 'geral';
 
   function draw() {
     const container = $('#statsContentArea');
-    if (tab === 'artilharia') {
+
+    if (tab === 'geral') {
+      const overall = getOverallStats(50);
+      const topScorer = getTopScorers(1)[0];
+      const topAssist = getTopAssists(1)[0];
+      const topOverall = overall[0];
+
+      container.innerHTML = `
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:14px; margin-bottom:20px;">
+          <div class="stat-card" style="border:1px solid var(--line); background:var(--panel);">
+            <div class="stat-label">👑 ARTILHEIRO LÍDER</div>
+            <div style="display:flex; align-items:center; gap:12px; margin-top:8px;">
+              <div class="avatar" style="width:42px; height:42px; font:700 16px var(--display); color:var(--gold); border:1px solid var(--line);">
+                ${topScorer ? esc(topScorer.athlete.apelido.charAt(0)) : '—'}
+              </div>
+              <div>
+                <strong style="font-size:15px; display:block;">${topScorer ? esc(topScorer.athlete.apelido) : 'A definir'}</strong>
+                <span style="color:var(--gold); font:800 18px var(--display);">${topScorer ? `${topScorer.goals} gol(s)` : '0 gols'}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="stat-card" style="border:1px solid var(--line); background:var(--panel);">
+            <div class="stat-label">🎯 LÍDER EM PASSES (GARÇOM)</div>
+            <div style="display:flex; align-items:center; gap:12px; margin-top:8px;">
+              <div class="avatar" style="width:42px; height:42px; font:700 16px var(--display); color:#8ce4a6; border:1px solid var(--line);">
+                ${topAssist ? esc(topAssist.athlete.apelido.charAt(0)) : '—'}
+              </div>
+              <div>
+                <strong style="font-size:15px; display:block;">${topAssist ? esc(topAssist.athlete.apelido) : 'A definir'}</strong>
+                <span style="color:#8ce4a6; font:800 18px var(--display);">${topAssist ? `${topAssist.assists} assist.` : '0 assist.'}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="stat-card" style="border:1px solid var(--line); background:var(--panel);">
+            <div class="stat-label">🔥 MAIS PARTICIPAÇÕES (G+A)</div>
+            <div style="display:flex; align-items:center; gap:12px; margin-top:8px;">
+              <div class="avatar" style="width:42px; height:42px; font:700 16px var(--display); color:#ffd874; border:1px solid var(--line);">
+                ${topOverall ? esc(topOverall.athlete.apelido.charAt(0)) : '—'}
+              </div>
+              <div>
+                <strong style="font-size:15px; display:block;">${topOverall ? esc(topOverall.athlete.apelido) : 'A definir'}</strong>
+                <span style="color:#ffd874; font:800 18px var(--display);">${topOverall ? `${topOverall.total} ações (${topOverall.goals}G + ${topOverall.assists}A)` : '0 ações'}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:50px;">Pos</th>
+                <th>Atleta</th>
+                <th>Time</th>
+                <th>Posição</th>
+                <th style="text-align:center;">⚽ Gols</th>
+                <th style="text-align:center;">🎯 Assistências</th>
+                <th style="text-align:right;">🔥 Total (G+A)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${overall.length ? overall.map((s, idx) => {
+                const team = state.teams.find(t => t.id === s.athlete.team_id);
+                const logo = team ? (team.logo_url || (team.nome && team.nome.toLowerCase().includes('inter') ? './public/escudo-internacional.svg' : './public/escudo-gremio.svg')) : null;
+                return `
+                  <tr>
+                    <td class="standings-pos">${idx + 1}º</td>
+                    <td>
+                      <div style="display:flex; align-items:center; gap:8px;">
+                        <strong>${esc(s.athlete.apelido)}</strong>
+                        ${s.athlete.numero_camisa ? `<small style="color:var(--muted);">#${s.athlete.numero_camisa}</small>` : ''}
+                      </div>
+                    </td>
+                    <td>
+                      ${team ? `
+                        <div style="display:flex; align-items:center; gap:8px;">
+                          <div style="width:20px; height:20px; min-width:20px; display:flex; align-items:center; justify-content:center;">
+                            ${logo ? `<img src="${esc(logo)}" alt="${esc(team.nome)}" style="width:100%; height:100%; object-fit:contain; filter:drop-shadow(0 2px 3px rgba(0,0,0,0.4));">` : `<span class="team-badge" style="border:1px solid ${team.cor}; color:${team.cor}; font-size:9px;">${team.badge}</span>`}
+                          </div>
+                          <span style="color:${team.cor}; font-weight:600; font-size:12px;">${esc(team.nome)}</span>
+                        </div>
+                      ` : '—'}
+                    </td>
+                    <td>${s.athlete.posicao || '—'}</td>
+                    <td style="text-align:center; font:800 16px var(--display); color:var(--gold);">${s.goals}</td>
+                    <td style="text-align:center; font:800 16px var(--display); color:#8ce4a6;">${s.assists}</td>
+                    <td style="text-align:right; font:800 18px var(--display); color:#ffd874;">${s.total}</td>
+                  </tr>
+                `;
+              }).join('') : '<tr><td colspan="7" class="empty-table">Nenhuma participação registrada nesta temporada.</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      `;
+    } else if (tab === 'artilharia') {
       const scorers = getTopScorers(30);
       container.innerHTML = `
         <div class="table-wrap">
@@ -1864,11 +2010,21 @@ function renderStats() {
             <tbody>
               ${scorers.length ? scorers.map((s, idx) => {
                 const team = state.teams.find(t => t.id === s.athlete.team_id);
+                const logo = team ? (team.logo_url || (team.nome && team.nome.toLowerCase().includes('inter') ? './public/escudo-internacional.svg' : './public/escudo-gremio.svg')) : null;
                 return `
                   <tr>
                     <td class="standings-pos">${idx + 1}º</td>
                     <td><strong>${esc(s.athlete.apelido)}</strong></td>
-                    <td>${team ? `<span style="color:${team.cor}; font-weight:600;">${esc(team.nome)}</span>` : '—'}</td>
+                    <td>
+                      ${team ? `
+                        <div style="display:flex; align-items:center; gap:8px;">
+                          <div style="width:20px; height:20px; min-width:20px; display:flex; align-items:center; justify-content:center;">
+                            ${logo ? `<img src="${esc(logo)}" alt="${esc(team.nome)}" style="width:100%; height:100%; object-fit:contain; filter:drop-shadow(0 2px 3px rgba(0,0,0,0.4));">` : `<span class="team-badge" style="border:1px solid ${team.cor}; color:${team.cor}; font-size:9px;">${team.badge}</span>`}
+                          </div>
+                          <span style="color:${team.cor}; font-weight:600; font-size:12px;">${esc(team.nome)}</span>
+                        </div>
+                      ` : '—'}
+                    </td>
                     <td>${s.athlete.posicao || '—'}</td>
                     <td style="text-align:right; font:800 18px var(--display); color:var(--gold);">${s.goals}</td>
                   </tr>
@@ -1895,11 +2051,21 @@ function renderStats() {
             <tbody>
               ${assists.length ? assists.map((s, idx) => {
                 const team = state.teams.find(t => t.id === s.athlete.team_id);
+                const logo = team ? (team.logo_url || (team.nome && team.nome.toLowerCase().includes('inter') ? './public/escudo-internacional.svg' : './public/escudo-gremio.svg')) : null;
                 return `
                   <tr>
                     <td class="standings-pos">${idx + 1}º</td>
                     <td><strong>${esc(s.athlete.apelido)}</strong></td>
-                    <td>${team ? `<span style="color:${team.cor}; font-weight:600;">${esc(team.nome)}</span>` : '—'}</td>
+                    <td>
+                      ${team ? `
+                        <div style="display:flex; align-items:center; gap:8px;">
+                          <div style="width:20px; height:20px; min-width:20px; display:flex; align-items:center; justify-content:center;">
+                            ${logo ? `<img src="${esc(logo)}" alt="${esc(team.nome)}" style="width:100%; height:100%; object-fit:contain; filter:drop-shadow(0 2px 3px rgba(0,0,0,0.4));">` : `<span class="team-badge" style="border:1px solid ${team.cor}; color:${team.cor}; font-size:9px;">${team.badge}</span>`}
+                          </div>
+                          <span style="color:${team.cor}; font-weight:600; font-size:12px;">${esc(team.nome)}</span>
+                        </div>
+                      ` : '—'}
+                    </td>
                     <td>${s.athlete.posicao || '—'}</td>
                     <td style="text-align:right; font:800 18px var(--display); color:#8ce4a6;">${s.assists}</td>
                   </tr>
@@ -1971,7 +2137,8 @@ function renderStats() {
     </div>
 
     <div class="subtabs" id="statsSubtabs">
-      <button class="tab-btn active" data-tab="artilharia">⚽ Artilharia</button>
+      <button class="tab-btn active" data-tab="geral">📊 Classificação Geral (G+A)</button>
+      <button class="tab-btn" data-tab="artilharia">⚽ Artilharia (Gols)</button>
       <button class="tab-btn" data-tab="assistencias">🎯 Garçons (Assistências)</button>
       <button class="tab-btn" data-tab="disciplina">🟨 Quadro Disciplinar & Suspensões</button>
     </div>
@@ -3112,6 +3279,11 @@ Object.assign(window, {
   // Juízes
   editJuizModal,
   deleteJuizAction,
+
+  // Estatísticas
+  getOverallStats,
+  getTopScorers,
+  getTopAssists,
 
   // Utilitários internos usados em onclick inline
   populateDemoData,
