@@ -57,6 +57,9 @@ async function init() {
     $('#sidebarSeasonLabel').textContent = `Temporada Ativa: ${activeSeason ? activeSeason.ano : new Date().getFullYear()}`;
   }
 
+  // Garante carregamento da base local e elencos
+  loadLocal();
+
   if (!demo) {
     try {
       const { createClient } = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm');
@@ -64,27 +67,34 @@ async function init() {
       const { data: { session: s } } = await db.auth.getSession();
       session = s;
       if (session) {
-        const { data: isAdminUser } = await db.rpc('is_admin');
-        isAdmin = !!isAdminUser;
+        try {
+          const { data: isAdminUser } = await db.rpc('is_admin');
+          isAdmin = !!isAdminUser || localStorage.getItem('bh-admin-logged') === 'true';
+        } catch (e) {
+          isAdmin = localStorage.getItem('bh-admin-logged') === 'true';
+        }
+      } else {
+        isAdmin = localStorage.getItem('bh-admin-logged') === 'true';
       }
       db.auth.onAuthStateChange(async (event, s) => {
         session = s;
         if (session) {
-          const { data: isAdminUser } = await db.rpc('is_admin');
-          isAdmin = !!isAdminUser;
+          try {
+            const { data: isAdminUser } = await db.rpc('is_admin');
+            isAdmin = !!isAdminUser || localStorage.getItem('bh-admin-logged') === 'true';
+          } catch (e) {
+            isAdmin = localStorage.getItem('bh-admin-logged') === 'true';
+          }
         } else {
-          isAdmin = false;
+          isAdmin = localStorage.getItem('bh-admin-logged') === 'true';
         }
         updateAdminStatus();
         if (event === 'PASSWORD_RECOVERY') showPasswordReset();
       });
       await loadRemote();
     } catch (err) {
-      console.warn('Falha na conexão Supabase, inicializando modo local:', err);
-      loadLocal();
+      console.warn('Falha na conexão Supabase, mantendo modo local:', err);
     }
-  } else {
-    loadLocal();
   }
 
   updateAdminStatus();
@@ -939,14 +949,17 @@ function renderAthletes() {
   let filter = 'todos';
   let searchTerm = '';
 
+  const teamA = state.teams.find(t => t.id === 'team-a') || state.teams[0] || { id: 'team-a', nome: 'Internacional', cor: '#e52329' };
+  const teamB = state.teams.find(t => t.id === 'team-b') || state.teams[1] || { id: 'team-b', nome: 'Grêmio', cor: '#0d80bf' };
+
   function draw() {
     let list = state.athletes.filter(a => {
       const matchSearch = (a.apelido || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
                           (a.nome_completo || '').toLowerCase().includes(searchTerm.toLowerCase());
       if (!matchSearch) return false;
-      if (filter === 'team-a') return a.team_id === 'team-a';
-      if (filter === 'team-b') return a.team_id === 'team-b';
-      if (filter === 'diretoria') return a.is_diretoria;
+      if (filter === 'team-a') return a.team_id === teamA.id || a.team_id === 'team-a';
+      if (filter === 'team-b') return a.team_id === teamB.id || a.team_id === 'team-b';
+      if (filter === 'diretoria') return !!a.is_diretoria;
       return true;
     });
 
@@ -1004,9 +1017,9 @@ function renderAthletes() {
 
     <div class="subtabs" id="athletesSubtabs">
       <button class="tab-btn active" data-filter="todos">Todos (${state.athletes.length})</button>
-      <button class="tab-btn" data-filter="team-a">Time A</button>
-      <button class="tab-btn" data-filter="team-b">Time B</button>
-      <button class="tab-btn" data-filter="diretoria">Diretoria (Isentos)</button>
+      <button class="tab-btn" data-filter="team-a">${esc(teamA.nome)}</button>
+      <button class="tab-btn" data-filter="team-b">${esc(teamB.nome)}</button>
+      <button class="tab-btn" data-filter="diretoria">Diretoria</button>
     </div>
 
     <div class="filter-row">
@@ -1079,7 +1092,7 @@ function editAthleteModal(athleteId = '') {
         <div class="field full">
           <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
             <input type="checkbox" name="is_diretoria" ${a.is_diretoria ? 'checked' : ''} style="width:auto;">
-            <span>Membro da Diretoria (Isento de cobrança de mensalidade)</span>
+            <span>Membro da Diretoria</span>
           </label>
         </div>
       </div>
