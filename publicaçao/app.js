@@ -824,12 +824,17 @@ function renderHome() {
               </tr>
             </thead>
             <tbody>
-              ${standings.map((row, idx) => `
+              ${standings.map((row, idx) => {
+                const logo = row.team.logo_url || (row.team.nome && row.team.nome.toLowerCase().includes('inter') ? './public/escudo-internacional.svg' : './public/escudo-gremio.svg');
+                return `
                 <tr>
                   <td>
-                    <div style="display:flex; align-items:center; gap:8px;">
-                      <span class="standings-pos">${idx + 1}º</span>
-                      <strong>${esc(row.team.nome)}</strong>
+                    <div style="display:flex; align-items:center; gap:10px;">
+                      <span class="standings-pos" style="min-width:18px;">${idx + 1}º</span>
+                      <div style="width:26px; height:26px; min-width:26px; display:flex; align-items:center; justify-content:center;">
+                        ${logo ? `<img src="${esc(logo)}" alt="${esc(row.team.nome)}" style="width:100%; height:100%; object-fit:contain; filter:drop-shadow(0 2px 4px rgba(0,0,0,0.5));">` : `<span class="team-badge" style="border:1px solid ${row.team.cor}; color:${row.team.cor};">${row.team.badge}</span>`}
+                      </div>
+                      <strong style="font-size:14px; color:#fff;">${esc(row.team.nome)}</strong>
                     </div>
                   </td>
                   <td class="standings-pts">${row.pontos}</td>
@@ -839,7 +844,8 @@ function renderHome() {
                     ${row.saldoGols > 0 ? '+' : ''}${row.saldoGols}
                   </td>
                 </tr>
-              `).join('')}
+                `;
+              }).join('')}
             </tbody>
           </table>
         </div>
@@ -1154,13 +1160,15 @@ function renderTeams() {
           </tr>
         </thead>
         <tbody>
-          ${standings.map((row, idx) => `
+          ${standings.map((row, idx) => {
+            const logo = row.team.logo_url || (row.team.nome && row.team.nome.toLowerCase().includes('inter') ? './public/escudo-internacional.svg' : './public/escudo-gremio.svg');
+            return `
             <tr>
               <td class="standings-pos">${idx + 1}º</td>
               <td>
                 <div style="display:flex; align-items:center; gap:10px;">
                   <div style="width:34px; height:34px; display:flex; align-items:center; justify-content:center;">
-                    ${row.team.logo_url ? `<img src="${esc(row.team.logo_url)}" alt="${esc(row.team.nome)}" style="width:100%; height:100%; object-fit:contain;">` : `<span class="team-badge" style="border:1px solid ${row.team.cor}; color:${row.team.cor};">${row.team.badge}</span>`}
+                    ${logo ? `<img src="${esc(logo)}" alt="${esc(row.team.nome)}" style="width:100%; height:100%; object-fit:contain; filter:drop-shadow(0 2px 4px rgba(0,0,0,0.5));">` : `<span class="team-badge" style="border:1px solid ${row.team.cor}; color:${row.team.cor};">${row.team.badge}</span>`}
                   </div>
                   <div>
                     <strong style="font-size:13px; color:${row.team.cor};">${esc(row.team.nome)}</strong>
@@ -1178,7 +1186,8 @@ function renderTeams() {
                 ${row.saldoGols > 0 ? '+' : ''}${row.saldoGols}
               </td>
             </tr>
-          `).join('')}
+            `;
+          }).join('')}
         </tbody>
       </table>
     </div>
