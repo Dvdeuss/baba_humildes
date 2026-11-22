@@ -1316,6 +1316,7 @@ function renderMatches() {
     let list = [...state.matches].sort((a, b) => new Date(b.data) - new Date(a.data));
     if (filter === 'Agendada') list = list.filter(m => m.status === 'Agendada');
     if (filter === 'Finalizada') list = list.filter(m => m.status === 'Finalizada');
+    if (filter === 'Cancelada') list = list.filter(m => m.status === 'Cancelada');
 
     $('#matchesList').innerHTML = list.length ? list.map(m => {
       const tA = state.teams.find(t => t.id === m.time_a) || { nome: 'Time A', cor: '#75a88a' };
@@ -1328,7 +1329,9 @@ function renderMatches() {
         <div class="panel" style="margin-bottom:16px;">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
             <div>
-              <span class="tag ${isFin ? 'tag-green' : 'tag-gold'}">${esc(m.status.toUpperCase())}</span>
+              <span class="tag ${isFin ? 'tag-green' : (m.status === 'Cancelada' ? 'tag' : 'tag-gold')}" style="${m.status === 'Cancelada' ? 'background:#3b2323; color:#f78d88; border:1px solid #f78d8844;' : ''}">
+                ${esc(m.status.toUpperCase())}
+              </span>
               <span style="font-size:11px; color:var(--muted); margin-left:8px;">
                 📅 ${new Date(m.data + 'T12:00:00Z').toLocaleDateString('pt-BR')} • ${m.hora || '07:30'} • ${esc(m.tipo)}
               </span>
@@ -1350,16 +1353,17 @@ function renderMatches() {
             </div>
           </div>
 
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px; flex-wrap:wrap; gap:8px;">
             <div style="font-size:11px; color:var(--muted);">
               ⚽ ${mGoals.length} gol(s) anotado(s) na súmula
             </div>
-            <div style="display:flex; gap:8px;">
+            <div style="display:flex; gap:8px; align-items:center;">
               <button class="btn btn-secondary" onclick="openSumulaModal('${m.id}')">
                 Abrir Súmula Digital ↗
               </button>
               ${isAdmin ? `
                 <button class="btn btn-outline" onclick="editMatchSchedule('${m.id}')">Editar</button>
+                <button class="btn btn-outline" style="color:#e57373; border-color:#e5737344;" onclick="deleteMatchAction('${m.id}')" title="Retirar partida da súmula e calendário">Excluir</button>
               ` : ''}
             </div>
           </div>
@@ -1382,6 +1386,7 @@ function renderMatches() {
       <button class="tab-btn active" data-filter="todas">Todas as Partidas</button>
       <button class="tab-btn" data-filter="Agendada">Agendadas</button>
       <button class="tab-btn" data-filter="Finalizada">Finalizadas</button>
+      <button class="tab-btn" data-filter="Cancelada">Canceladas</button>
     </div>
 
     <div id="matchesList"></div>
@@ -1453,9 +1458,16 @@ function editMatchSchedule(matchId = '') {
           </select>
         </div>
       </div>
-      <div class="modal-actions">
-        <button type="button" class="btn-secondary" data-close>Cancelar</button>
-        <button type="submit" class="btn-primary">Salvar Partida</button>
+      <div class="modal-actions" style="display:flex; justify-content:space-between; align-items:center;">
+        ${m.id ? `
+          <button type="button" class="btn btn-outline" style="color:#e57373; border-color:#e5737344;" onclick="deleteMatchAction('${m.id}')">
+            🗑 Retirar Partida da Súmula
+          </button>
+        ` : '<div></div>'}
+        <div style="display:flex; gap:8px;">
+          <button type="button" class="btn-secondary" data-close>Cancelar</button>
+          <button type="submit" class="btn-primary">Salvar Partida</button>
+        </div>
       </div>
     </form>
   `);
@@ -1490,6 +1502,46 @@ function editMatchSchedule(matchId = '') {
       notify(err.message);
     }
   };
+}
+
+async function deleteMatchAction(matchId) {
+  const m = state.matches.find(x => x.id === matchId);
+  if (!m) return;
+  const dateFormatted = m.data ? new Date(m.data + 'T12:00:00Z').toLocaleDateString('pt-BR') : '';
+  if (!confirm(`Deseja realmente retirar e excluir esta partida (${dateFormatted}) da lista e da súmula?`)) return;
+
+  try {
+    // 1. Limpa gols vinculados
+    const mGoals = state.goals.filter(g => g.match_id === matchId);
+    for (const g of mGoals) {
+      await saveRecord('goals', { id: g.id }, true);
+    }
+    // 2. Limpa assistências vinculadas
+    const mAssists = state.assistencias.filter(as => as.match_id === matchId);
+    for (const as of mAssists) {
+      await saveRecord('assistencias', { id: as.id }, true);
+    }
+    // 3. Limpa cartões vinculados
+    const mCards = state.cards.filter(c => c.match_id === matchId);
+    for (const c of mCards) {
+      await saveRecord('cards', { id: c.id }, true);
+    }
+    // 4. Limpa presenças vinculadas
+    const mPresencas = state.presencas.filter(p => p.match_id === matchId);
+    for (const p of mPresencas) {
+      await saveRecord('presencas', { id: p.id }, true);
+    }
+    // 5. Exclui a partida
+    await saveRecord('matches', { id: matchId }, true);
+
+    if ($('#editDialog')) $('#editDialog').close();
+    if ($('#adminDialog')) $('#adminDialog').close();
+
+    notify('Partida retirada do calendário e da súmula com sucesso!');
+    renderPage('partidas');
+  } catch (err) {
+    notify(err.message);
+  }
 }
 
 /**
@@ -1536,7 +1588,7 @@ function openSumulaModal(matchId) {
     </div>
 
     ${isAdmin ? `
-      <div style="display:flex; gap:8px; margin-bottom:16px;">
+      <div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; align-items:center;">
         <button class="btn btn-secondary" onclick="addGoalModal('${matchId}')">⚽ + Registrar Gol</button>
         <button class="btn btn-secondary" onclick="addCardModal('${matchId}')">🟨 + Registrar Cartão</button>
         ${m.status === 'Agendada' ? `
@@ -1548,6 +1600,9 @@ function openSumulaModal(matchId) {
             Reabrir Partida
           </button>
         `}
+        <button class="btn btn-outline" style="color:#e57373; border-color:#e5737344;" onclick="deleteMatchAction('${matchId}')" title="Retirar partida da súmula e calendário">
+          🗑 Retirar da Súmula
+        </button>
       </div>
     ` : ''}
 
@@ -3618,6 +3673,7 @@ Object.assign(window, {
 
   // Partidas e Súmula
   editMatchSchedule,
+  deleteMatchAction,
   openSumulaModal,
   addGoalModal,
   addCardModal,
