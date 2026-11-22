@@ -1888,6 +1888,285 @@ async function toggleAttendanceAdmin(matchId, athleteId, status) {
   }
 }
 
+// ------------------------------------------------------------------------------
+// 4.7 GERENCIAMENTO RÁPIDO DE ESTATÍSTICAS E DISCIPLINA (ADMIN)
+// ------------------------------------------------------------------------------
+
+function getTargetMatch() {
+  const activeSeason = getActiveTemporada();
+  let m = state.matches.find(x => x.status === 'Finalizada') || state.matches[0];
+  if (!m) {
+    m = {
+      id: id(),
+      data: new Date().toISOString().split('T')[0],
+      hora: '07:30',
+      tipo: 'Domingo',
+      time_a: 'team-a',
+      time_b: 'team-b',
+      placar_a: 0,
+      placar_b: 0,
+      status: 'Finalizada',
+      temporada_id: activeSeason.id
+    };
+    state.matches.push(m);
+    saveLocal();
+  }
+  return m;
+}
+
+async function quickAddGoalForAthlete(athleteId) {
+  const athlete = state.athletes.find(a => a.id === athleteId);
+  if (!athlete) return;
+  const match = getTargetMatch();
+
+  const newGoal = {
+    id: id(),
+    match_id: match.id,
+    athlete_id: athleteId,
+    quantidade: 1,
+    team_id: athlete.team_id || match.time_a
+  };
+
+  try {
+    await saveRecord('goals', newGoal);
+    recalculateMatchScore(match.id);
+    notify(`⚽ +1 Gol adicionado para ${athlete.apelido}!`);
+    renderPage('estatisticas');
+  } catch (err) {
+    notify(err.message);
+  }
+}
+
+async function quickRemoveGoalForAthlete(athleteId) {
+  const athlete = state.athletes.find(a => a.id === athleteId);
+  if (!athlete) return;
+  const goals = state.goals.filter(g => g.athlete_id === athleteId);
+  if (!goals.length) {
+    notify(`${athlete.apelido} não possui gols registrados.`);
+    return;
+  }
+  const lastGoal = goals[goals.length - 1];
+  if (!confirm(`Remover 1 gol de ${athlete.apelido}?`)) return;
+
+  try {
+    await saveRecord('goals', { id: lastGoal.id }, true);
+    const assist = state.assistencias.find(as => as.goal_id === lastGoal.id);
+    if (assist) await saveRecord('assistencias', { id: assist.id }, true);
+
+    recalculateMatchScore(lastGoal.match_id);
+    notify(`Gol de ${athlete.apelido} removido.`);
+    renderPage('estatisticas');
+  } catch (err) {
+    notify(err.message);
+  }
+}
+
+async function quickAddAssistForAthlete(athleteId) {
+  const athlete = state.athletes.find(a => a.id === athleteId);
+  if (!athlete) return;
+  const match = getTargetMatch();
+
+  const newAssist = {
+    id: id(),
+    match_id: match.id,
+    athlete_id: athleteId,
+    quantidade: 1
+  };
+
+  try {
+    await saveRecord('assistencias', newAssist);
+    notify(`🎯 +1 Assistência adicionada para ${athlete.apelido}!`);
+    renderPage('estatisticas');
+  } catch (err) {
+    notify(err.message);
+  }
+}
+
+async function quickRemoveAssistForAthlete(athleteId) {
+  const athlete = state.athletes.find(a => a.id === athleteId);
+  if (!athlete) return;
+  const assists = state.assistencias.filter(as => as.athlete_id === athleteId);
+  if (!assists.length) {
+    notify(`${athlete.apelido} não possui assistências registradas.`);
+    return;
+  }
+  const lastAssist = assists[assists.length - 1];
+  if (!confirm(`Remover 1 assistência de ${athlete.apelido}?`)) return;
+
+  try {
+    await saveRecord('assistencias', { id: lastAssist.id }, true);
+    notify(`Assistência de ${athlete.apelido} removida.`);
+    renderPage('estatisticas');
+  } catch (err) {
+    notify(err.message);
+  }
+}
+
+async function quickAddCardForAthlete(athleteId, type = 'Amarelo') {
+  const athlete = state.athletes.find(a => a.id === athleteId);
+  if (!athlete) return;
+  const match = getTargetMatch();
+
+  if (type === 'Amarelo') {
+    const yellowsInMatch = state.cards.filter(c => c.match_id === match.id && c.atleta_id === athleteId && c.type === 'Amarelo');
+    if (yellowsInMatch.length >= 1) {
+      type = 'Vermelho';
+      notify('2º Amarelo no jogo: convertido automaticamente em VERMELHO!');
+    }
+  }
+
+  const newCard = {
+    id: id(),
+    match_id: match.id,
+    atleta_id: athleteId,
+    type
+  };
+
+  try {
+    await saveRecord('cards', newCard);
+    notify(`${type === 'Vermelho' ? '🟥 Cartão Vermelho' : '🟨 Cartão Amarelo'} aplicado para ${athlete.apelido}!`);
+    renderPage('estatisticas');
+  } catch (err) {
+    notify(err.message);
+  }
+}
+
+async function quickRemoveCardForAthlete(athleteId) {
+  const athlete = state.athletes.find(a => a.id === athleteId);
+  if (!athlete) return;
+  const cards = state.cards.filter(c => c.atleta_id === athleteId);
+  if (!cards.length) {
+    notify(`${athlete.apelido} não possui cartões registrados.`);
+    return;
+  }
+  const lastCard = cards[cards.length - 1];
+  if (!confirm(`Remover último cartão (${lastCard.type}) de ${athlete.apelido}?`)) return;
+
+  try {
+    await saveRecord('cards', { id: lastCard.id }, true);
+    notify(`Cartão de ${athlete.apelido} removido.`);
+    renderPage('estatisticas');
+  } catch (err) {
+    notify(err.message);
+  }
+}
+
+function openStatsEntryModal(defaultType = 'gol') {
+  showAdmin(`
+    <h2>⚡ Lançar Estatística / Disciplina</h2>
+    <p>Adicione rapidamente gols, assistências ou cartões para qualquer atleta:</p>
+
+    <form id="quickStatsForm">
+      <div class="field">
+        <label>Tipo de Lançamento *</label>
+        <select name="entry_type" id="statsEntryTypeSelect" onchange="toggleStatsModalFields(this.value)">
+          <option value="gol" ${defaultType === 'gol' ? 'selected' : ''}>⚽ Gol Marcado</option>
+          <option value="assistencia" ${defaultType === 'assistencia' ? 'selected' : ''}>🎯 Assistência (Passe)</option>
+          <option value="cartao_amarelo" ${defaultType === 'cartao' ? 'selected' : ''}>🟨 Cartão Amarelo</option>
+          <option value="cartao_vermelho">🟥 Cartão Vermelho</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label>Atleta *</label>
+        <select name="athlete_id" required>
+          <option value="">Selecione o atleta</option>
+          ${state.athletes.map(a => `<option value="${a.id}">${esc(a.apelido)} (${a.posicao || 'Jogador'}${a.numero_camisa ? ` • #${a.numero_camisa}` : ''})</option>`).join('')}
+        </select>
+      </div>
+
+      <div class="field" id="assistFieldGroup" style="${defaultType === 'gol' ? 'display:block;' : 'display:none;'}">
+        <label>Assistência / Passe para o Gol (Opcional)</label>
+        <select name="assist_athlete_id">
+          <option value="">Nenhum (Gol individual / sem assistência)</option>
+          ${state.athletes.map(a => `<option value="${a.id}">${esc(a.apelido)}</option>`).join('')}
+        </select>
+      </div>
+
+      <div class="field">
+        <label>Partida Associada</label>
+        <select name="match_id">
+          ${state.matches.map(m => {
+            const tA = state.teams.find(t => t.id === m.time_a)?.nome || 'Internacional';
+            const tB = state.teams.find(t => t.id === m.time_b)?.nome || 'Grêmio';
+            return `<option value="${m.id}">${new Date(m.data + 'T12:00:00Z').toLocaleDateString('pt-BR')} • ${tA} × ${tB} (${m.status})</option>`;
+          }).join('')}
+        </select>
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" data-close>Cancelar</button>
+        <button type="submit" class="btn-primary">Confirmar Lançamento</button>
+      </div>
+    </form>
+  `);
+
+  window.toggleStatsModalFields = function(val) {
+    const g = $('#assistFieldGroup');
+    if (g) g.style.display = val === 'gol' ? 'block' : 'none';
+  };
+
+  $('#quickStatsForm').onsubmit = async e => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const entryType = f.get('entry_type');
+    const athleteId = f.get('athlete_id');
+    const assistAthleteId = f.get('assist_athlete_id');
+    const matchId = f.get('match_id') || getTargetMatch().id;
+    const athlete = state.athletes.find(a => a.id === athleteId);
+
+    try {
+      if (entryType === 'gol') {
+        const goalId = id();
+        await saveRecord('goals', {
+          id: goalId,
+          match_id: matchId,
+          athlete_id: athleteId,
+          quantidade: 1,
+          team_id: athlete?.team_id || 'team-a'
+        });
+        if (assistAthleteId && assistAthleteId !== athleteId) {
+          await saveRecord('assistencias', {
+            id: id(),
+            match_id: matchId,
+            athlete_id: assistAthleteId,
+            goal_id: goalId,
+            quantidade: 1
+          });
+        }
+        recalculateMatchScore(matchId);
+        notify(`⚽ Gol registrado para ${athlete ? athlete.apelido : 'atleta'}!`);
+      } else if (entryType === 'assistencia') {
+        await saveRecord('assistencias', {
+          id: id(),
+          match_id: matchId,
+          athlete_id: athleteId,
+          quantidade: 1
+        });
+        notify(`🎯 Assistência registrada para ${athlete ? athlete.apelido : 'atleta'}!`);
+      } else if (entryType === 'cartao_amarelo' || entryType === 'cartao_vermelho') {
+        let type = entryType === 'cartao_vermelho' ? 'Vermelho' : 'Amarelo';
+        if (type === 'Amarelo') {
+          const y = state.cards.filter(c => c.match_id === matchId && c.atleta_id === athleteId && c.type === 'Amarelo');
+          if (y.length >= 1) type = 'Vermelho';
+        }
+        await saveRecord('cards', {
+          id: id(),
+          match_id: matchId,
+          atleta_id: athleteId,
+          type
+        });
+        notify(`Cartão ${type} registrado com sucesso!`);
+      }
+
+      $('#adminDialog').close();
+      renderPage('estatisticas');
+    } catch (err) {
+      notify(err.message);
+    }
+  };
+}
+
 /**
  * 4.7 ESTATÍSTICAS (renderStats)
  */
@@ -1956,7 +2235,8 @@ function renderStats() {
                 <th>Posição</th>
                 <th style="text-align:center;">⚽ Gols</th>
                 <th style="text-align:center;">🎯 Assistências</th>
-                <th style="text-align:right;">🔥 Total (G+A)</th>
+                <th style="text-align:center;">🔥 Total (G+A)</th>
+                ${isAdmin ? '<th style="text-align:right;">Ações Rápidas</th>' : ''}
               </tr>
             </thead>
             <tbody>
@@ -1983,12 +2263,37 @@ function renderStats() {
                       ` : '—'}
                     </td>
                     <td>${s.athlete.posicao || '—'}</td>
-                    <td style="text-align:center; font:800 16px var(--display); color:var(--gold);">${s.goals}</td>
-                    <td style="text-align:center; font:800 16px var(--display); color:#8ce4a6;">${s.assists}</td>
-                    <td style="text-align:right; font:800 18px var(--display); color:#ffd874;">${s.total}</td>
+                    <td style="text-align:center;">
+                      <div style="display:inline-flex; align-items:center; gap:4px;">
+                        <span style="font:800 16px var(--display); color:var(--gold); min-width:18px; text-align:center;">${s.goals}</span>
+                        ${isAdmin ? `
+                          <button class="btn-badge-action" onclick="quickAddGoalForAthlete('${s.athlete.id}')" title="Adicionar 1 Gol">+</button>
+                          <button class="btn-badge-action danger" onclick="quickRemoveGoalForAthlete('${s.athlete.id}')" title="Remover 1 Gol" ${s.goals === 0 ? 'disabled style="opacity:0.3; cursor:not-allowed;"' : ''}>-</button>
+                        ` : ''}
+                      </div>
+                    </td>
+                    <td style="text-align:center;">
+                      <div style="display:inline-flex; align-items:center; gap:4px;">
+                        <span style="font:800 16px var(--display); color:#8ce4a6; min-width:18px; text-align:center;">${s.assists}</span>
+                        ${isAdmin ? `
+                          <button class="btn-badge-action" onclick="quickAddAssistForAthlete('${s.athlete.id}')" title="Adicionar 1 Assistência">+</button>
+                          <button class="btn-badge-action danger" onclick="quickRemoveAssistForAthlete('${s.athlete.id}')" title="Remover 1 Assistência" ${s.assists === 0 ? 'disabled style="opacity:0.3; cursor:not-allowed;"' : ''}>-</button>
+                        ` : ''}
+                      </div>
+                    </td>
+                    <td style="text-align:center; font:800 18px var(--display); color:#ffd874;">${s.total}</td>
+                    ${isAdmin ? `
+                      <td style="text-align:right;">
+                        <div style="display:flex; justify-content:flex-end; gap:4px;">
+                          <button class="btn-badge-action" style="min-width:28px;" onclick="quickAddCardForAthlete('${s.athlete.id}', 'Amarelo')" title="Aplicar Cartão Amarelo">+🟨</button>
+                          <button class="btn-badge-action" style="min-width:28px;" onclick="quickAddCardForAthlete('${s.athlete.id}', 'Vermelho')" title="Aplicar Cartão Vermelho">+🟥</button>
+                          <button class="btn-badge-action danger" style="min-width:28px;" onclick="quickRemoveCardForAthlete('${s.athlete.id}')" title="Remover Último Cartão">-🎴</button>
+                        </div>
+                      </td>
+                    ` : ''}
                   </tr>
                 `;
-              }).join('') : '<tr><td colspan="7" class="empty-table">Nenhuma participação registrada nesta temporada.</td></tr>'}
+              }).join('') : '<tr><td colspan="8" class="empty-table">Nenhuma participação registrada nesta temporada.</td></tr>'}
             </tbody>
           </table>
         </div>
@@ -2004,7 +2309,8 @@ function renderStats() {
                 <th>Atleta</th>
                 <th>Time</th>
                 <th>Posição</th>
-                <th style="text-align:right;">Gols Marcados</th>
+                <th style="text-align:center;">Gols Marcados</th>
+                ${isAdmin ? '<th style="text-align:right;">Ações</th>' : ''}
               </tr>
             </thead>
             <tbody>
@@ -2026,10 +2332,23 @@ function renderStats() {
                       ` : '—'}
                     </td>
                     <td>${s.athlete.posicao || '—'}</td>
-                    <td style="text-align:right; font:800 18px var(--display); color:var(--gold);">${s.goals}</td>
+                    <td style="text-align:center;">
+                      <div style="display:inline-flex; align-items:center; gap:6px;">
+                        <span style="font:800 18px var(--display); color:var(--gold); min-width:20px;">${s.goals}</span>
+                        ${isAdmin ? `
+                          <button class="btn-badge-action" onclick="quickAddGoalForAthlete('${s.athlete.id}')" title="Adicionar 1 Gol">+</button>
+                          <button class="btn-badge-action danger" onclick="quickRemoveGoalForAthlete('${s.athlete.id}')" title="Remover 1 Gol" ${s.goals === 0 ? 'disabled style="opacity:0.3; cursor:not-allowed;"' : ''}>-</button>
+                        ` : ''}
+                      </div>
+                    </td>
+                    ${isAdmin ? `
+                      <td style="text-align:right;">
+                        <button class="btn btn-outline" style="padding:4px 8px; font-size:11px;" onclick="quickRemoveGoalForAthlete('${s.athlete.id}')">Remover Gol</button>
+                      </td>
+                    ` : ''}
                   </tr>
                 `;
-              }).join('') : '<tr><td colspan="5" class="empty-table">Nenhum gol registrado nesta temporada.</td></tr>'}
+              }).join('') : `<tr><td colspan="${isAdmin ? 6 : 5}" class="empty-table">Nenhum gol registrado nesta temporada.</td></tr>`}
             </tbody>
           </table>
         </div>
@@ -2045,7 +2364,8 @@ function renderStats() {
                 <th>Atleta</th>
                 <th>Time</th>
                 <th>Posição</th>
-                <th style="text-align:right;">Assistências</th>
+                <th style="text-align:center;">Assistências</th>
+                ${isAdmin ? '<th style="text-align:right;">Ações</th>' : ''}
               </tr>
             </thead>
             <tbody>
@@ -2067,10 +2387,23 @@ function renderStats() {
                       ` : '—'}
                     </td>
                     <td>${s.athlete.posicao || '—'}</td>
-                    <td style="text-align:right; font:800 18px var(--display); color:#8ce4a6;">${s.assists}</td>
+                    <td style="text-align:center;">
+                      <div style="display:inline-flex; align-items:center; gap:6px;">
+                        <span style="font:800 18px var(--display); color:#8ce4a6; min-width:20px;">${s.assists}</span>
+                        ${isAdmin ? `
+                          <button class="btn-badge-action" onclick="quickAddAssistForAthlete('${s.athlete.id}')" title="Adicionar 1 Assistência">+</button>
+                          <button class="btn-badge-action danger" onclick="quickRemoveAssistForAthlete('${s.athlete.id}')" title="Remover 1 Assistência" ${s.assists === 0 ? 'disabled style="opacity:0.3; cursor:not-allowed;"' : ''}>-</button>
+                        ` : ''}
+                      </div>
+                    </td>
+                    ${isAdmin ? `
+                      <td style="text-align:right;">
+                        <button class="btn btn-outline" style="padding:4px 8px; font-size:11px;" onclick="quickRemoveAssistForAthlete('${s.athlete.id}')">Remover Assistência</button>
+                      </td>
+                    ` : ''}
                   </tr>
                 `;
-              }).join('') : '<tr><td colspan="5" class="empty-table">Nenhuma assistência registrada nesta temporada.</td></tr>'}
+              }).join('') : `<tr><td colspan="${isAdmin ? 6 : 5}" class="empty-table">Nenhuma assistência registrada nesta temporada.</td></tr>`}
             </tbody>
           </table>
         </div>
@@ -2099,6 +2432,7 @@ function renderStats() {
                 <th>Total Amarelos</th>
                 <th>Total Vermelhos</th>
                 <th>Suspensões Cumpridas</th>
+                ${isAdmin ? '<th style="text-align:right;">Ações Disciplinares</th>' : ''}
               </tr>
             </thead>
             <tbody>
@@ -2113,11 +2447,22 @@ function renderStats() {
                     `}
                   </td>
                   <td style="font-weight:700; color:${d.accumulatedYellows >= 2 ? '#ffd874' : 'inherit'};">
-                    ${d.accumulatedYellows} / 3
+                    <div style="display:flex; align-items:center; gap:6px;">
+                      <span>${d.accumulatedYellows} / 3</span>
+                    </div>
                   </td>
                   <td>${d.totalYellows}</td>
                   <td style="color:#f78d88; font-weight:600;">${d.totalReds}</td>
                   <td>${d.suspensionsServed}</td>
+                  ${isAdmin ? `
+                    <td style="text-align:right;">
+                      <div style="display:flex; justify-content:flex-end; gap:4px;">
+                        <button class="btn btn-outline" style="padding:3px 7px; font-size:10px; color:#ffd874; border-color:#ffd874;" onclick="quickAddCardForAthlete('${d.athlete.id}', 'Amarelo')">+ 🟨</button>
+                        <button class="btn btn-outline" style="padding:3px 7px; font-size:10px; color:#f78d88; border-color:#f78d88;" onclick="quickAddCardForAthlete('${d.athlete.id}', 'Vermelho')">+ 🟥</button>
+                        <button class="btn btn-outline" style="padding:3px 7px; font-size:10px; color:#e57373;" onclick="quickRemoveCardForAthlete('${d.athlete.id}')" ${d.totalYellows + d.totalReds === 0 ? 'disabled style="opacity:0.3; cursor:not-allowed;"' : ''}>Remover</button>
+                      </div>
+                    </td>
+                  ` : ''}
                 </tr>
               `).join('')}
             </tbody>
@@ -2134,6 +2479,13 @@ function renderStats() {
         <h1>Rankings Esportivos & Disciplinares</h1>
         <p>Acompanhe a artilharia, ranking de assistências (garçons) e o controle de cartões e suspensões.</p>
       </div>
+      ${isAdmin ? `
+        <div style="display:flex; flex-wrap:wrap; gap:8px;">
+          <button class="btn btn-gold" onclick="openStatsEntryModal('gol')">⚽ + Adicionar Gol</button>
+          <button class="btn btn-secondary" onclick="openStatsEntryModal('assistencia')">🎯 + Adicionar Assistência</button>
+          <button class="btn btn-secondary" onclick="openStatsEntryModal('cartao')">🟨/🟥 + Aplicar Cartão</button>
+        </div>
+      ` : ''}
     </div>
 
     <div class="subtabs" id="statsSubtabs">
@@ -3284,6 +3636,13 @@ Object.assign(window, {
   getOverallStats,
   getTopScorers,
   getTopAssists,
+  quickAddGoalForAthlete,
+  quickRemoveGoalForAthlete,
+  quickAddAssistForAthlete,
+  quickRemoveAssistForAthlete,
+  quickAddCardForAthlete,
+  quickRemoveCardForAthlete,
+  openStatsEntryModal,
 
   // Utilitários internos usados em onclick inline
   populateDemoData,
