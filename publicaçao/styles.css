@@ -1167,3 +1167,36 @@ mix-blend-mode: screen;
   border-color: #f78d88;
 }
 
+/* Lista Compacta de Atletas (Econômica de Espaço) */
+.athletes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.athlete-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  gap: 12px;
+  transition: all 0.15s ease;
+}
+
+.athlete-row:hover {
+  border-color: rgba(213, 180, 106, 0.35);
+  background: #142a20;
+}
+
+@media (max-width: 768px) {
+  .athlete-row {
+    flex-wrap: wrap;
+    padding: 10px 12px;
+    gap: 8px;
+  }
+}
+

@@ -1019,38 +1019,48 @@ function renderAthletes() {
       const fin = checkInadimplencia(a.id);
 
       return `
-        <div class="team-card" style="position:relative; flex-direction:column; align-items:flex-start; gap:10px;">
-          <div style="display:flex; width:100%; justify-content:space-between; align-items:flex-start;">
-            <div style="display:flex; align-items:center; gap:12px;">
-              <div class="avatar" style="width:48px; height:48px; font:800 20px var(--display); color:var(--gold); border:1px solid var(--line);">
-                ${a.foto_url ? `<img src="${a.foto_url}" alt="${esc(a.apelido)}">` : esc(a.apelido.charAt(0))}
-              </div>
-              <div>
-                <h3 style="margin:0;">${esc(a.apelido)}</h3>
-                <small style="color:var(--muted);">${a.posicao || 'Posição indefinida'} ${a.numero_camisa ? `• Camisa #${a.numero_camisa}` : ''}</small>
-              </div>
+        <div class="athlete-row">
+          <div style="display:flex; align-items:center; gap:10px; min-width:200px; flex:1.2;">
+            <div class="avatar" style="width:34px; height:34px; min-width:34px; font:700 14px var(--display); color:var(--gold); border:1px solid var(--line); border-radius:50%; display:flex; align-items:center; justify-content:center;">
+              ${a.foto_url ? `<img src="${a.foto_url}" alt="${esc(a.apelido)}" style="width:100%; height:100%; border-radius:50%; object-fit:cover;">` : esc(a.apelido.charAt(0))}
             </div>
-            ${team ? `<span class="badge-tag" style="background:${team.cor}22; color:${team.cor}; border:1px solid ${team.cor}66;">${esc(team.nome)}</span>` : '<span class="badge-tag">Sem time</span>'}
-          </div>
-
-          <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:4px;">
-            ${a.is_diretoria ? `<span class="badge-tag gold">★ DIRETORIA</span>` : ''}
-            ${disc.isSuspended ? `<span class="badge-tag danger">🔴 SUSPENSO: ${esc(disc.reason)}</span>` : `<span class="badge-tag success">🟢 APTO PARA O BABA</span>`}
-            ${fin.isInadimplente ? `<span class="badge-tag warning">⚠️ MENSALIDADE PENDENTE</span>` : ''}
-          </div>
-
-          <div style="display:flex; justify-content:space-between; width:100%; margin-top:8px; padding-top:8px; border-top:1px solid var(--line); font-size:11px; color:var(--muted);">
-            <div>Cartões: 🟨 ${disc.totalYellows} | 🟥 ${disc.totalReds}</div>
-            ${isAdmin ? `
-              <div class="row-actions">
-                <button onclick="editAthleteModal('${a.id}')">Editar</button> •
-                <button onclick="deleteAthleteAction('${a.id}')" style="color:#e57373;">Excluir</button>
+            <div>
+              <div style="display:flex; align-items:center; gap:6px;">
+                <strong style="font-size:14px; color:#fff;">${esc(a.apelido)}</strong>
+                ${a.numero_camisa ? `<span style="font-size:11px; color:var(--gold); font-weight:700;">#${a.numero_camisa}</span>` : ''}
+                ${a.is_diretoria ? `<span class="badge-tag gold" style="padding:1px 5px; font-size:9px;">★ DIRETORIA</span>` : ''}
               </div>
-            ` : ''}
+              <small style="color:var(--muted); font-size:11px;">${a.posicao || 'Jogador'}${a.nome_completo ? ` • ${esc(a.nome_completo)}` : ''}</small>
+            </div>
           </div>
+
+          <div style="min-width:130px; flex:0.8;">
+            ${team ? `
+              <span class="badge-tag" style="background:${team.cor}18; color:${team.cor}; border:1px solid ${team.cor}44; padding:3px 8px; font-size:11px; display:inline-flex; align-items:center; gap:6px;">
+                <span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:${team.cor};"></span>
+                ${esc(team.nome)}
+              </span>
+            ` : '<span class="badge-tag" style="opacity:0.5; font-size:11px;">Sem time</span>'}
+          </div>
+
+          <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; flex:1;">
+            ${disc.isSuspended ? `<span class="badge-tag danger" style="padding:2px 7px; font-size:10px;">🔴 SUSPENSO: ${esc(disc.reason)}</span>` : `<span class="badge-tag success" style="padding:2px 7px; font-size:10px;">🟢 APTO PARA O BABA</span>`}
+            ${fin.isInadimplente ? `<span class="badge-tag warning" style="padding:2px 7px; font-size:10px;">⚠️ MENSALIDADE PENDENTE</span>` : ''}
+          </div>
+
+          <div style="font-size:12px; color:var(--muted); white-space:nowrap; min-width:85px; text-align:center;">
+            🟨 <strong>${disc.totalYellows}</strong> <span style="opacity:0.3; margin:0 3px;">|</span> 🟥 <strong>${disc.totalReds}</strong>
+          </div>
+
+          ${isAdmin ? `
+            <div style="display:flex; align-items:center; gap:6px; margin-left:auto; white-space:nowrap;">
+              <button class="btn btn-outline" style="padding:3px 8px; font-size:11px;" onclick="editAthleteModal('${a.id}')">Editar</button>
+              <button class="btn btn-outline" style="padding:3px 8px; font-size:11px; color:#e57373; border-color:#e5737344;" onclick="deleteAthleteAction('${a.id}')">Excluir</button>
+            </div>
+          ` : ''}
         </div>
       `;
-    }).join('') : `<div class="empty-state full" style="grid-column:1/-1;">Nenhum atleta encontrado com estes filtros.</div>`;
+    }).join('') : `<div class="empty-state full">Nenhum atleta encontrado com estes filtros.</div>`;
 
     $('#athletesList').innerHTML = athletesHtml;
   }
@@ -1076,7 +1086,7 @@ function renderAthletes() {
       <input type="search" id="athleteSearch" placeholder="Buscar atleta por apelido ou nome..." />
     </div>
 
-    <div class="cards-grid" id="athletesList"></div>
+    <div class="athletes-list" id="athletesList"></div>
   `;
 
   $('#athleteSearch').oninput = e => {
