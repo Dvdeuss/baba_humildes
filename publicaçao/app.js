@@ -374,7 +374,7 @@ async function saveRecord(table, row, remove = false) {
   saveLocal();
 
   // Tenta sincronizar com Supabase se disponível (sem bloquear UI em caso de falha)
-  if (db && session) {
+  if (db && (session || isAdmin || table === 'presencas')) {
     const supabaseTable = SUPABASE_TABLE_MAP[table] || table;
     try {
       const { error } = remove
@@ -571,7 +571,7 @@ function calculateStandings() {
 /**
  * 4.5 Cálculo Dinâmico de Placar da Súmula
  */
-function recalculateMatchScore(matchId) {
+async function recalculateMatchScore(matchId) {
   const match = state.matches.find(m => m.id === matchId);
   if (!match) return;
 
@@ -591,7 +591,7 @@ function recalculateMatchScore(matchId) {
 
   match.placar_a = scoreA;
   match.placar_b = scoreB;
-  saveLocal();
+  await saveRecord('matches', match);
 }
 
 // ------------------------------------------------------------------------------
@@ -1179,6 +1179,16 @@ function editAthleteModal(athleteId = '') {
 
     try {
       await saveRecord('athletes', athleteData);
+      const activeSeason = getActiveTemporada();
+      if (activeSeason) {
+        await saveRecord('athletes_temporada', {
+          id: `at-${athleteData.id}`,
+          atleta_id: athleteData.id,
+          temporada_id: activeSeason.id,
+          time_id: athleteData.team_id,
+          ativo: true
+        });
+      }
       $('#editDialog').close();
       notify('Atleta salvo com sucesso!');
       renderPage('atletas');
@@ -1191,6 +1201,7 @@ function editAthleteModal(athleteId = '') {
 async function deleteAthleteAction(aid) {
   if (!confirm('Tem certeza que deseja excluir este atleta do cadastro?')) return;
   try {
+    await saveRecord('athletes_temporada', { id: `at-${aid}` }, true);
     await saveRecord('athletes', { id: aid }, true);
     notify('Atleta excluído.');
     renderPage('atletas');
@@ -2902,14 +2913,16 @@ function batchGenerateDuesModal() {
     for (const a of nonBoardAthletes) {
       const exists = state.mensalidades.some(m => m.atleta_id === a.id && m.mes === mes && (!m.temporada_id || m.temporada_id === activeSeason.id));
       if (!exists) {
-        state.mensalidades.push({
+        const newDue = {
           id: id(),
           atleta_id: a.id,
           temporada_id: activeSeason.id,
           mes,
           valor,
           pago: false
-        });
+        };
+        state.mensalidades.push(newDue);
+        await saveRecord('mensalidades', newDue);
         count++;
       }
     }
@@ -3465,7 +3478,7 @@ function editSeasonModal() {
     const idx = state.temporadas.findIndex(t => t.id === s.id);
     if (idx >= 0) state.temporadas[idx] = updatedSeason;
     else state.temporadas.push(updatedSeason);
-    saveLocal();
+    await saveRecord('temporadas', updatedSeason);
     $('#adminDialog').close();
     notify('✅ Temporada atualizada com sucesso!');
     renderPage(currentPage);

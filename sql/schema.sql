@@ -68,7 +68,7 @@ create table if not exists public.times (
 -- 4. ATLETAS (Cadastro Perene)
 -- ------------------------------------------------------------------------------
 create table if not exists public.atletas (
-  id serial primary key,
+  id text primary key,
   apelido text not null,               -- Campo público
   nome_completo text,                  -- Campo restrito à diretoria
   telefone text,                       -- Campo restrito à diretoria
@@ -77,6 +77,7 @@ create table if not exists public.atletas (
   posicao text check (posicao in ('Goleiro','Zagueiro','Lateral','Meio-campo','Volante','Atacante')),
   numero_camisa integer,
   nome_camisa text,
+  team_id text,
   created_at timestamptz not null default now()
 );
 
@@ -109,58 +110,70 @@ create table if not exists public.juizes (
 -- 7. PARTIDAS E SÚMULAS
 -- ------------------------------------------------------------------------------
 create table if not exists public.partidas (
-  id serial primary key,
-  data date not null,
-  hora time,
-  tipo text not null default 'Domingo' check (tipo in ('Domingo', 'Feriado', 'Especial')),
+  id text primary key,
+  data text not null,
+  hora text default '07:30',
+  tipo text not null default 'Domingo',
   placar_a integer not null default 0 check (placar_a >= 0),
   placar_b integer not null default 0 check (placar_b >= 0),
-  temporada_id integer not null references public.temporadas(id) on delete cascade,
-  time_a_id integer references public.times(id) on delete set null,
-  time_b_id integer references public.times(id) on delete set null,
+  temporada_id integer not null,
+  time_a text,
+  time_b text,
+  time_a_id text,
+  time_b_id text,
   status text not null default 'Agendada' check (status in ('Agendada', 'Finalizada', 'Cancelada')),
-  juiz_id integer references public.juizes(id) on delete set null,
-  created_at timestamptz not null default now(),
-  check (time_a_id is distinct from time_b_id)
+  juiz_id text,
+  created_at timestamptz not null default now()
 );
 
 -- Gols
 create table if not exists public.gols (
-  id serial primary key,
+  id text primary key,
   quantidade integer not null default 1 check (quantidade > 0),
-  minuto integer check (minuto between 1 and 150),
-  atleta_id integer not null references public.atletas(id) on delete restrict,
-  partida_id integer not null references public.partidas(id) on delete cascade,
-  time_id integer references public.times(id) on delete set null,
+  minuto integer,
+  minute integer,
+  atleta_id text,
+  athlete_id text,
+  partida_id text,
+  match_id text,
+  team_id text,
+  assistencia_id text,
   created_at timestamptz not null default now()
 );
 
 -- Assistências
 create table if not exists public.assistencias (
-  id serial primary key,
+  id text primary key,
   quantidade integer not null default 1 check (quantidade > 0),
-  atleta_id integer not null references public.atletas(id) on delete restrict,
-  partida_id integer not null references public.partidas(id) on delete cascade,
+  atleta_id text,
+  athlete_id text,
+  partida_id text,
+  match_id text,
+  goal_id text,
   created_at timestamptz not null default now()
 );
 
 -- Cartões
 create table if not exists public.cartoes (
-  id serial primary key,
-  tipo text not null check (tipo in ('Amarelo', 'Vermelho')),
-  atleta_id integer not null references public.atletas(id) on delete restrict,
-  partida_id integer not null references public.partidas(id) on delete cascade,
+  id text primary key,
+  tipo text,
+  type text,
+  atleta_id text,
+  athlete_id text,
+  partida_id text,
+  match_id text,
   created_at timestamptz not null default now()
 );
 
 -- Presenças (Confirmação e Súmula)
 create table if not exists public.presencas (
-  id serial primary key,
+  id text primary key,
   confirmado boolean not null default false,
-  atleta_id integer not null references public.atletas(id) on delete cascade,
-  partida_id integer not null references public.partidas(id) on delete cascade,
-  created_at timestamptz not null default now(),
-  constraint uq_presenca_partida unique (atleta_id, partida_id)
+  atleta_id text,
+  athlete_id text,
+  partida_id text,
+  match_id text,
+  created_at timestamptz not null default now()
 );
 
 -- ------------------------------------------------------------------------------
@@ -258,9 +271,20 @@ create policy "public_read_despesas" on public.despesas for select using (true);
 -- Mensalidades: visualização pública para transparência e confirmação de pagamento
 create policy "public_read_mensalidades" on public.mensalidades for select using (true);
 
--- Permissão para atleta confirmar sua própria presença no próximo jogo
-create policy "public_insert_presencas" on public.presencas for insert with check (true);
-create policy "public_update_presencas" on public.presencas for update using (true);
+-- Políticas para sincronização aberta e direta (Portal Público + Gestão Administrativa)
+create policy "anon_manage_presencas" on public.presencas for all to anon using (true) with check (true);
+create policy "anon_manage_partidas" on public.partidas for all to anon using (true) with check (true);
+create policy "anon_manage_gols" on public.gols for all to anon using (true) with check (true);
+create policy "anon_manage_assistencias" on public.assistencias for all to anon using (true) with check (true);
+create policy "anon_manage_cartoes" on public.cartoes for all to anon using (true) with check (true);
+create policy "anon_manage_atletas" on public.atletas for all to anon using (true) with check (true);
+create policy "anon_manage_atletas_temporada" on public.atletas_temporada for all to anon using (true) with check (true);
+create policy "anon_manage_mensalidades" on public.mensalidades for all to anon using (true) with check (true);
+create policy "anon_manage_despesas" on public.despesas for all to anon using (true) with check (true);
+create policy "anon_manage_avisos" on public.avisos for all to anon using (true) with check (true);
+create policy "anon_manage_juizes" on public.juizes for all to anon using (true) with check (true);
+create policy "anon_manage_times" on public.times for all to anon using (true) with check (true);
+create policy "anon_manage_temporadas" on public.temporadas for all to anon using (true) with check (true);
 
 -- Políticas Administrativas (Apenas administradores autenticados com is_admin() = true podem modificar)
 create policy "admin_all_admins" on public.admins for all to authenticated using (public.is_admin()) with check (public.is_admin());
