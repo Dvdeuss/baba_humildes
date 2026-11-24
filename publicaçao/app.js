@@ -139,20 +139,40 @@ function loadLocal() {
 }
 
 function ensureInterGremioTeams() {
-  const teamA = state.teams.find(t => t.id === 'team-a');
-  if (teamA) {
-    teamA.nome = 'Internacional';
-    teamA.cor = '#e52329';
-    teamA.badge = 'INT';
-    teamA.logo_url = './public/escudo-internacional.svg';
-  }
-  const teamB = state.teams.find(t => t.id === 'team-b');
-  if (teamB) {
-    teamB.nome = 'Grêmio';
-    teamB.cor = '#0d80bf';
-    teamB.badge = 'GRE';
-    teamB.logo_url = './public/escudo-gremio.svg';
-  }
+  const teamA = state.teams.find(t => t.id === 'team-a' || (t.nome && t.nome.toLowerCase().includes('inter'))) || {};
+  const teamB = state.teams.find(t => t.id === 'team-b' || (t.nome && t.nome.toLowerCase().includes('gr'))) || {};
+
+  state.teams = [
+    {
+      id: 'team-a',
+      nome: 'Internacional',
+      cor: '#e52329',
+      badge: 'INT',
+      logo_url: './public/escudo-internacional.svg',
+      temporada_id: 1,
+      ...teamA,
+      id: 'team-a',
+      nome: 'Internacional',
+      cor: '#e52329',
+      badge: 'INT',
+      logo_url: './public/escudo-internacional.svg'
+    },
+    {
+      id: 'team-b',
+      nome: 'Grêmio',
+      cor: '#0d80bf',
+      badge: 'GRE',
+      logo_url: './public/escudo-gremio.svg',
+      temporada_id: 1,
+      ...teamB,
+      id: 'team-b',
+      nome: 'Grêmio',
+      cor: '#0d80bf',
+      badge: 'GRE',
+      logo_url: './public/escudo-gremio.svg'
+    }
+  ];
+  saveLocal();
 }
 
 function saveLocal() {
@@ -510,8 +530,9 @@ function checkInadimplencia(athleteId) {
  * Ordem: Pontos DESC, Vitórias DESC, Saldo de Gols DESC, Gols Pró DESC.
  */
 function calculateStandings() {
+  ensureInterGremioTeams();
   const activeSeason = getActiveTemporada();
-  const seasonTeams = state.teams.filter(t => !t.temporada_id || t.temporada_id === activeSeason.id);
+  const seasonTeams = state.teams.filter(t => t.id === 'team-a' || t.id === 'team-b');
   const table = seasonTeams.map(t => ({
     team: t,
     jogos: 0,
@@ -1214,6 +1235,7 @@ async function deleteAthleteAction(aid) {
  * 4.3 TIMES & TABELA (renderTeams)
  */
 function renderTeams() {
+  ensureInterGremioTeams();
   const activeSeason = getActiveTemporada();
   const standings = calculateStandings();
 
@@ -1284,7 +1306,7 @@ function renderTeams() {
     </div>
 
     <div class="cards-grid">
-      ${state.teams.map(t => {
+      ${state.teams.filter(t => t.id === 'team-a' || t.id === 'team-b').map(t => {
         const teamAthletes = state.athletes.filter(a => a.team_id === t.id);
         return `
           <div class="panel">
