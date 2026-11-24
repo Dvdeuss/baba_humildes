@@ -2603,9 +2603,14 @@ function renderFinance() {
 
     if (subtab === 'mensalidades') {
       area.innerHTML = `
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
           <div style="font-size:12px; color:var(--muted);">Controle individual de arrecadação por competência mensal.</div>
-          ${isAdmin ? `<button class="btn btn-secondary" onclick="batchGenerateDuesModal()">⚡ Gerar Mensalidades do Mês em Lote</button>` : ''}
+          ${isAdmin ? `
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+              <button class="btn btn-secondary" onclick="batchGenerateDuesModal()">⚡ Gerar Mensalidades do Mês em Lote</button>
+              <button class="btn btn-outline" style="color:#e57373; border-color:#e5737344;" onclick="batchDeleteDuesModal()">🗑 Retirar Lote do Mês</button>
+            </div>
+          ` : ''}
         </div>
         <div class="table-wrap">
           <table>
@@ -2622,10 +2627,16 @@ function renderFinance() {
             </thead>
             <tbody>
               ${state.mensalidades.length ? state.mensalidades.map(m => {
-                const a = state.athletes.find(x => x.id === m.atleta_id);
+                const a = state.athletes.find(x => x.id === m.atleta_id || x.id === m.athlete_id);
                 return `
                   <tr>
-                    <td><strong>${a ? esc(a.apelido) : 'Atleta'}</strong></td>
+                    <td>
+                      <div style="display:flex; flex-direction:column;">
+                        <strong>${a ? esc(a.apelido) : 'Atleta Não Identificado'}</strong>
+                        ${a && a.numero_camisa ? `<small style="font-size:11px; color:var(--muted);">#${a.numero_camisa}</small>` : ''}
+                        ${!a ? `<small style="font-size:10px; color:#f78d88;">ID: ${esc(m.atleta_id || m.athlete_id || '—')}</small>` : ''}
+                      </div>
+                    </td>
                     <td>Mês ${String(m.mes).padStart(2,'0')}/${activeSeason.ano}</td>
                     <td>${money(m.valor || 25)}</td>
                     <td>
@@ -2639,9 +2650,12 @@ function renderFinance() {
                     <td>${m.forma_pagamento || '—'}</td>
                     <td>${m.comprovante_url ? `<a href="${m.comprovante_url}" target="_blank" style="color:var(--gold);">Ver arquivo ↗</a>` : '—'}</td>
                     ${isAdmin ? `
-                      <td style="text-align:right;">
+                      <td style="text-align:right; white-space:nowrap;">
                         <button class="btn btn-outline" style="padding:4px 10px; font-size:11px;" onclick="togglePaymentStatus('${m.id}')">
                           ${m.pago ? '↩ Reverter' : '✅ Dar Baixa'}
+                        </button>
+                        <button class="btn btn-outline" style="padding:4px 8px; font-size:11px; color:#e57373; border-color:#e5737344; margin-left:4px;" onclick="deleteDuesAction('${m.id}')" title="Excluir este lançamento de mensalidade">
+                          🗑
                         </button>
                       </td>
                     ` : ''}
@@ -2829,7 +2843,7 @@ async function togglePaymentStatus(duesId) {
 function registerPaymentModal(duesId) {
   const due = state.mensalidades.find(m => m.id === duesId);
   if (!due) return;
-  const a = state.athletes.find(x => x.id === due.atleta_id);
+  const a = state.athletes.find(x => x.id === due.atleta_id || x.id === due.athlete_id);
   const activeSeason = getActiveTemporada();
   const today = new Date().toISOString().split('T')[0];
 
@@ -2932,6 +2946,79 @@ function batchGenerateDuesModal() {
     notify(`${count} mensalidade(s) gerada(s) com sucesso!`);
     renderPage('financeiro');
   };
+}
+
+function batchDeleteDuesModal() {
+  const activeSeason = getActiveTemporada();
+  const currentMonth = new Date().getMonth() + 1;
+  const existingMonths = [...new Set(state.mensalidades.map(m => m.mes))].sort((a, b) => a - b);
+
+  showAdmin(`
+    <h2>🗑 Retirar Lote de Mensalidades do Mês</h2>
+    <p>Selecione a competência (mês) que deseja <strong>remover em lote</strong> da temporada ativa.</p>
+    <div class="notice" style="border-color:#e57373; color:#f78d88; margin-bottom:14px;">
+      ⚠️ Esta ação excluirá todas as cobranças de mensalidade geradas para o mês escolhido.
+    </div>
+    <form id="batchDeleteDuesForm">
+      <div class="field">
+        <label>Competência (Mês) a Remover *</label>
+        <select name="mes" required>
+          ${existingMonths.length ? existingMonths.map(m => {
+            const count = state.mensalidades.filter(x => x.mes === m && (!x.temporada_id || x.temporada_id === activeSeason.id)).length;
+            return `<option value="${m}" ${m === currentMonth ? 'selected' : ''}>Mês ${String(m).padStart(2,'0')} / ${activeSeason.ano} (${count} mensalidade(s))</option>`;
+          }).join('') : [1,2,3,4,5,6,7,8,9,10,11,12].map(m => `
+            <option value="${m}">Mês ${String(m).padStart(2,'0')} / ${activeSeason.ano}</option>
+          `).join('')}
+        </select>
+      </div>
+      <div class="modal-actions" style="display:flex; justify-content:space-between;">
+        <button type="button" class="btn-secondary" data-close>Cancelar</button>
+        <button type="submit" class="btn-primary" style="background:#c0392b; border-color:#c0392b;">Excluir Lote do Mês</button>
+      </div>
+    </form>
+  `);
+
+  $('#batchDeleteDuesForm').onsubmit = async e => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const mes = Number(f.get('mes'));
+    const toDelete = state.mensalidades.filter(m => m.mes === mes && (!m.temporada_id || m.temporada_id === activeSeason.id));
+
+    if (!toDelete.length) {
+      return notify(`Nenhuma mensalidade encontrada para o mês ${String(mes).padStart(2,'0')}.`);
+    }
+
+    if (!confirm(`Tem certeza que deseja EXCLUIR ${toDelete.length} mensalidade(s) do Mês ${String(mes).padStart(2,'0')}? Esta ação não pode ser desfeita.`)) {
+      return;
+    }
+
+    try {
+      for (const m of toDelete) {
+        await saveRecord('mensalidades', { id: m.id }, true);
+      }
+      $('#adminDialog').close();
+      notify(`Lote do Mês ${String(mes).padStart(2,'0')} excluído com sucesso (${toDelete.length} mensalidade(s) removida(s)).`);
+      renderPage('financeiro');
+    } catch (err) {
+      notify(err.message);
+    }
+  };
+}
+
+async function deleteDuesAction(duesId) {
+  const m = state.mensalidades.find(x => x.id === duesId);
+  if (!m) return;
+  const a = state.athletes.find(x => x.id === m.atleta_id || x.id === m.athlete_id);
+  const atletaNome = a ? a.apelido : 'este registro';
+  if (!confirm(`Deseja realmente excluir a mensalidade do Mês ${m.mes} referente a ${atletaNome}?`)) return;
+
+  try {
+    await saveRecord('mensalidades', { id: duesId }, true);
+    notify('Mensalidade excluída com sucesso.');
+    renderPage('financeiro');
+  } catch (err) {
+    notify(err.message);
+  }
 }
 
 function newExpenseModal() {
@@ -3698,6 +3785,8 @@ Object.assign(window, {
 
   // Financeiro
   batchGenerateDuesModal,
+  batchDeleteDuesModal,
+  deleteDuesAction,
   newExpenseModal,
   deleteExpenseAction,
   togglePaymentStatus,
