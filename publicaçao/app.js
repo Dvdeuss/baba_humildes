@@ -751,13 +751,27 @@ function renderHome() {
   const featuredNotice = state.avisos.find(a => a.ativo && a.destaque) || state.avisos.find(a => a.ativo);
 
   const totalAthletes = state.athletes.length;
-  const finishedMatchesCount = state.matches.filter(m => m.status === 'Finalizada').length;
+  const finishedMatches = state.matches
+    .filter(m => m.status === 'Finalizada')
+    .sort((a, b) => new Date(b.data) - new Date(a.data));
+  const finishedMatchesCount = finishedMatches.length;
   const totalGoals = state.goals.reduce((acc, g) => acc + (g.quantidade || 1), 0);
   const avgGoals = finishedMatchesCount ? (totalGoals / finishedMatchesCount).toFixed(1) : '0.0';
 
   const totalPaid = state.mensalidades.filter(m => m.pago).reduce((acc, m) => acc + Number(m.valor || 25), 0);
   const totalExpenses = state.despesas.reduce((acc, d) => acc + Number(d.valor || 0), 0);
+  const totalPending = state.mensalidades.filter(m => !m.pago).reduce((acc, m) => acc + Number(m.valor || 25), 0);
   const balance = totalPaid - totalExpenses;
+  const finMax = Math.max(totalPaid, totalExpenses, Math.abs(balance), totalPending, 1);
+
+  const nextConfirmed = nextMatchData
+    ? state.presencas
+        .filter(p => p.match_id === nextMatchData.id && p.confirmado)
+        .map(p => state.athletes.find(a => a.id === p.athlete_id || a.id === p.atleta_id))
+        .filter(Boolean)
+    : [];
+
+  const roundHighlights = getOverallStats(3);
 
   $('#appContent').innerHTML = `
     <section class="hero">
@@ -852,12 +866,89 @@ function renderHome() {
 
       <div class="panel contribution">
         <div class="panel-heading">
-          <div><span class="eyebrow">CONTRIBUIÇÃO DA TEMPORADA</span><h2>Mensalidade</h2></div>
+          <div><span class="eyebrow">CONTRIBUIÇÃO & CAIXA</span><h2>Situação Financeira</h2></div>
           <span class="coin-icon">R$</span>
         </div>
         <div class="contribution-value">${money(activeSeason.valor_mensalidade_padrao)}<span>/mês</span></div>
-        <p>Contribuição mensal por atleta (isenção para membros da diretoria). Tolerância de carência de <strong>1 mês e 10 dias</strong> antes do bloqueio de presença.</p>
+        <p>Contribuição mensal por atleta (isenção para membros da diretoria). Carência de <strong>1 mês e 10 dias</strong> antes do bloqueio.</p>
+        <div class="bh-fin-bars">
+          <div class="bh-fin-bar-row">
+            <span>Arrecadado</span>
+            <div class="bh-fin-track"><i class="is-green" style="width:${Math.max(4, (totalPaid / finMax) * 100).toFixed(1)}%"></i></div>
+            <b>${money(totalPaid)}</b>
+          </div>
+          <div class="bh-fin-bar-row">
+            <span>Despesas</span>
+            <div class="bh-fin-track"><i class="is-red" style="width:${Math.max(4, (totalExpenses / finMax) * 100).toFixed(1)}%"></i></div>
+            <b>${money(totalExpenses)}</b>
+          </div>
+          <div class="bh-fin-bar-row">
+            <span>A Receber</span>
+            <div class="bh-fin-track"><i class="is-gold" style="width:${Math.max(4, (totalPending / finMax) * 100).toFixed(1)}%"></i></div>
+            <b>${money(totalPending)}</b>
+          </div>
+        </div>
         <button class="text-button" data-goto="financeiro">Prestação de contas e pagamentos →</button>
+      </div>
+    </section>
+
+    <section class="section-grid">
+      <div class="panel">
+        <div class="panel-heading">
+          <div><span class="eyebrow">ÚLTIMOS RESULTADOS</span><h2>Histórico Recente</h2></div>
+          <button class="text-button" data-goto="partidas">Todas as partidas →</button>
+        </div>
+        <div class="bh-results-list">
+          ${finishedMatches.length ? finishedMatches.slice(0, 3).map(m => {
+            const tA = state.teams.find(t => t.id === m.time_a) || { nome: 'Internacional', cor: '#e52329' };
+            const tB = state.teams.find(t => t.id === m.time_b) || { nome: 'Grêmio', cor: '#0d80bf' };
+            return `
+              <div class="bh-result-row">
+                <span class="bh-result-date">${new Date(m.data + 'T12:00:00Z').toLocaleDateString('pt-BR')}</span>
+                <div class="bh-result-score">
+                  <span style="color:${tA.cor};">${esc(tA.nome)}</span>
+                  <strong>${m.placar_a} × ${m.placar_b}</strong>
+                  <span style="color:${tB.cor};">${esc(tB.nome)}</span>
+                </div>
+                <button class="btn btn-outline bh-mini-btn" onclick="openSumulaModal('${m.id}')">Súmula</button>
+              </div>
+            `;
+          }).join('') : '<div class="empty-state compact">Nenhuma partida finalizada ainda.</div>'}
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-heading">
+          <div><span class="eyebrow">DESTAQUES & CONFIRMADOS</span><h2>Pulso da Rodada</h2></div>
+          ${nextMatchData ? `<button class="text-button" onclick="openPublicAttendanceModal('${nextMatchData.id}')">Confirmar presença →</button>` : ''}
+        </div>
+        <div class="bh-confirmed-box">
+          <div class="bh-confirmed-head">
+            <span>Atletas confirmados para o próximo jogo</span>
+            <span class="badge-tag success">${nextConfirmed.length} confirmado(s)</span>
+          </div>
+          <div class="bh-confirmed-chips">
+            ${nextConfirmed.length ? nextConfirmed.slice(0, 10).map(a => `
+              <span class="bh-player-chip">
+                <i>${esc(a.apelido.charAt(0))}</i>
+                ${esc(a.apelido)}${a.numero_camisa ? ` <small>#${a.numero_camisa}</small>` : ''}
+              </span>
+            `).join('') : '<span class="bh-muted-inline">Nenhuma confirmação registrada até o momento.</span>'}
+            ${nextConfirmed.length > 10 ? `<span class="bh-player-chip is-more">+${nextConfirmed.length - 10}</span>` : ''}
+          </div>
+        </div>
+        <div class="bh-highlights-strip">
+          <div class="bh-strip-label">DESTAQUES G+A DA TEMPORADA</div>
+          <div class="bh-highlights-grid">
+            ${roundHighlights.length ? roundHighlights.map((item, idx) => `
+              <div class="bh-highlight-mini">
+                <span class="bh-hl-pos">${idx + 1}º</span>
+                <strong title="${esc(item.athlete.apelido)}">${esc(item.athlete.apelido)}</strong>
+                <small>${item.goals}G • ${item.assists}A</small>
+              </div>
+            `).join('') : '<div class="empty-state compact">Sem participações registradas.</div>'}
+          </div>
+        </div>
       </div>
     </section>
 
@@ -1068,54 +1159,57 @@ function renderAthletes() {
       return true;
     });
 
-    const athletesHtml = list.length ? list.map(a => {
+    const athletesHtml = list.length ? `<div class="bh-fc-grid">${list.map(a => {
       const team = state.teams.find(t => t.id === a.team_id);
       const disc = calculateDisciplinaryStatus(a.id);
       const fin = checkInadimplencia(a.id);
+      const goalsCount = state.goals.filter(g => g.athlete_id === a.id || g.atleta_id === a.id).reduce((s, g) => s + (g.quantidade || 1), 0);
+      const assistsCount = state.assistencias.filter(as => as.athlete_id === a.id || as.atleta_id === a.id).reduce((s, as) => s + (as.quantidade || 1), 0);
+      const teamColor = team ? team.cor : '#22D3EE';
 
       return `
-        <div class="athlete-row">
-          <div style="display:flex; align-items:center; gap:10px; min-width:200px; flex:1.2;">
-            <div class="avatar" style="width:34px; height:34px; min-width:34px; font:700 14px var(--display); color:var(--gold); border:1px solid var(--line); border-radius:50%; display:flex; align-items:center; justify-content:center;">
-              ${a.foto_url ? `<img src="${a.foto_url}" alt="${esc(a.apelido)}" style="width:100%; height:100%; border-radius:50%; object-fit:cover;">` : esc(a.apelido.charAt(0))}
+        <article class="bh-fc-card" style="--team-color:${teamColor};">
+          <div class="bh-fc-top">
+            <div class="bh-fc-avatar">
+              ${a.foto_url ? `<img src="${esc(a.foto_url)}" alt="${esc(a.apelido)}">` : esc(a.apelido.charAt(0))}
             </div>
-            <div>
-              <div style="display:flex; align-items:center; gap:6px;">
-                <strong style="font-size:14px; color:#fff;">${esc(a.apelido)}</strong>
-                ${a.numero_camisa ? `<span style="font-size:11px; color:var(--gold); font-weight:700;">#${a.numero_camisa}</span>` : ''}
-                ${a.is_diretoria ? `<span class="badge-tag gold" style="padding:1px 5px; font-size:9px;">★ DIRETORIA</span>` : ''}
+            <div class="bh-fc-identity">
+              <div class="bh-fc-name-row">
+                <strong>${esc(a.apelido)}</strong>
+                ${a.numero_camisa ? `<span class="bh-fc-shirt">#${a.numero_camisa}</span>` : ''}
+                ${a.is_diretoria ? `<span class="badge-tag gold">★ DIRETORIA</span>` : ''}
               </div>
-              <small style="color:var(--muted); font-size:11px;">${a.posicao || 'Jogador'}${a.nome_completo ? ` • ${esc(a.nome_completo)}` : ''}</small>
+              <div class="bh-fc-sub">${esc(a.posicao || 'Jogador')}${a.nome_completo ? ` • ${esc(a.nome_completo)}` : ''}</div>
             </div>
           </div>
 
-          <div style="min-width:130px; flex:0.8;">
+          <div class="bh-fc-metrics">
+            <div class="bh-fc-metric is-goals"><span>GOLS</span><b>${goalsCount}</b></div>
+            <div class="bh-fc-metric is-assists"><span>ASSIST.</span><b>${assistsCount}</b></div>
+            <div class="bh-fc-metric"><span>CARTÕES</span><b>🟨${disc.totalYellows} 🟥${disc.totalReds}</b></div>
+          </div>
+
+          <div class="bh-fc-badges">
             ${team ? `
-              <span class="badge-tag" style="background:${team.cor}18; color:${team.cor}; border:1px solid ${team.cor}44; padding:3px 8px; font-size:11px; display:inline-flex; align-items:center; gap:6px;">
-                <span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:${team.cor};"></span>
-                ${esc(team.nome)}
+              <span class="badge-tag" style="background:${team.cor}1f; color:${team.cor}; border:1px solid ${team.cor}55;">
+                ● ${esc(team.nome)}
               </span>
-            ` : '<span class="badge-tag" style="opacity:0.5; font-size:11px;">Sem time</span>'}
-          </div>
-
-          <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; flex:1;">
-            ${disc.isSuspended ? `<span class="badge-tag danger" style="padding:2px 7px; font-size:10px;">🔴 SUSPENSO: ${esc(disc.reason)}</span>` : `<span class="badge-tag success" style="padding:2px 7px; font-size:10px;">🟢 APTO PARA O BABA</span>`}
-            ${fin.isInadimplente ? `<span class="badge-tag warning" style="padding:2px 7px; font-size:10px;">⚠️ MENSALIDADE PENDENTE</span>` : ''}
-          </div>
-
-          <div style="font-size:12px; color:var(--muted); white-space:nowrap; min-width:85px; text-align:center;">
-            🟨 <strong>${disc.totalYellows}</strong> <span style="opacity:0.3; margin:0 3px;">|</span> 🟥 <strong>${disc.totalReds}</strong>
+            ` : '<span class="badge-tag">Sem time</span>'}
+            ${disc.isSuspended
+              ? `<span class="badge-tag danger">🔴 SUSPENSO: ${esc(disc.reason)}</span>`
+              : `<span class="badge-tag success">🟢 APTO PARA O BABA</span>`}
+            ${fin.isInadimplente ? `<span class="badge-tag warning">⚠️ MENSALIDADE PENDENTE</span>` : ''}
           </div>
 
           ${isAdmin ? `
-            <div style="display:flex; align-items:center; gap:6px; margin-left:auto; white-space:nowrap;">
-              <button class="btn btn-outline" style="padding:3px 8px; font-size:11px;" onclick="editAthleteModal('${a.id}')">Editar</button>
-              <button class="btn btn-outline" style="padding:3px 8px; font-size:11px; color:#e57373; border-color:#e5737344;" onclick="deleteAthleteAction('${a.id}')">Excluir</button>
+            <div class="bh-fc-actions">
+              <button class="btn btn-outline bh-mini-btn" onclick="editAthleteModal('${a.id}')">Editar</button>
+              <button class="btn btn-outline bh-mini-btn bh-btn-danger" onclick="deleteAthleteAction('${a.id}')">Excluir</button>
             </div>
           ` : ''}
-        </div>
+        </article>
       `;
-    }).join('') : `<div class="empty-state full">Nenhum atleta encontrado com estes filtros.</div>`;
+    }).join('')}</div>` : `<div class="empty-state full">Nenhum atleta encontrado com estes filtros.</div>`;
 
     $('#athletesList').innerHTML = athletesHtml;
   }
@@ -1386,51 +1480,53 @@ function renderMatches() {
     if (filter === 'Cancelada') list = list.filter(m => m.status === 'Cancelada');
 
     $('#matchesList').innerHTML = list.length ? list.map(m => {
-      const tA = state.teams.find(t => t.id === m.time_a) || { nome: 'Time A', cor: '#75a88a' };
-      const tB = state.teams.find(t => t.id === m.time_b) || { nome: 'Time B', cor: '#d5b46a' };
+      const tA = state.teams.find(t => t.id === m.time_a) || { nome: 'Time A', cor: '#34D399' };
+      const tB = state.teams.find(t => t.id === m.time_b) || { nome: 'Time B', cor: '#F5B942' };
       const juiz = state.juizes.find(j => j.id === m.juiz_id);
       const isFin = m.status === 'Finalizada';
-      const mGoals = state.goals.filter(g => g.match_id === m.id);
+      const mGoals = state.goals.filter(g => g.match_id === m.id || g.partida_id === m.id);
+      const mCards = state.cards.filter(c => c.match_id === m.id || c.partida_id === m.id);
+      const mPresencas = state.presencas.filter(p => (p.match_id === m.id || p.partida_id === m.id) && p.confirmado);
 
       return `
-        <div class="panel" style="margin-bottom:16px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-            <div>
-              <span class="tag ${isFin ? 'tag-green' : (m.status === 'Cancelada' ? 'tag' : 'tag-gold')}" style="${m.status === 'Cancelada' ? 'background:#3b2323; color:#f78d88; border:1px solid #f78d8844;' : ''}">
+        <div class="panel bh-match-panel" style="margin-bottom:16px;">
+          <div class="bh-match-head">
+            <div class="bh-match-meta">
+              <span class="tag ${isFin ? 'tag-green' : (m.status === 'Cancelada' ? 'tag' : 'tag-gold')}" style="${m.status === 'Cancelada' ? 'background:rgba(248,113,113,0.16); color:#f87171; border:1px solid rgba(248,113,113,0.35);' : ''}">
                 ${esc(m.status.toUpperCase())}
               </span>
-              <span style="font-size:11px; color:var(--muted); margin-left:8px;">
-                📅 ${new Date(m.data + 'T12:00:00Z').toLocaleDateString('pt-BR')} • ${m.hora || '07:30'} • ${esc(m.tipo)}
-              </span>
+              <span>📅 ${new Date(m.data + 'T12:00:00Z').toLocaleDateString('pt-BR')} • ${m.hora || '07:30'} • ${esc(m.tipo)}</span>
             </div>
-            ${juiz ? `<span style="font-size:11px; color:var(--gold);">⚖ Árbitro: ${esc(juiz.nome)}</span>` : ''}
+            ${juiz ? `<span class="badge-tag info">⚖ Árbitro: ${esc(juiz.nome)}</span>` : ''}
           </div>
 
-          <div class="scoreline" style="background:#0e1913; border:1px solid var(--line); border-radius:10px;">
-            <div style="flex:1; display:flex; align-items:center; justify-content:flex-end; gap:12px;">
-              <span style="font:800 24px var(--display); color:${tA.cor};">${esc(tA.nome)}</span>
-              ${tA.logo_url ? `<img src="${esc(tA.logo_url)}" alt="${esc(tA.nome)}" style="width:38px; height:38px; object-fit:contain; filter:drop-shadow(0 4px 6px #0006);">` : ''}
+          <div class="bh-scoreline-pro">
+            <div class="bh-scoreline-team is-left">
+              <span style="color:${tA.cor};">${esc(tA.nome)}</span>
+              ${tA.logo_url ? `<img src="${esc(tA.logo_url)}" alt="${esc(tA.nome)}">` : ''}
             </div>
-            <strong style="font:800 38px var(--display); padding:0 20px; color:${isFin ? '#fff' : 'var(--muted)'};">
-              ${m.placar_a} <span style="font-size:20px; color:var(--muted);">×</span> ${m.placar_b}
-            </strong>
-            <div style="flex:1; display:flex; align-items:center; justify-content:flex-start; gap:12px;">
-              ${tB.logo_url ? `<img src="${esc(tB.logo_url)}" alt="${esc(tB.nome)}" style="width:38px; height:38px; object-fit:contain; filter:drop-shadow(0 4px 6px #0006);">` : ''}
-              <span style="font:800 24px var(--display); color:${tB.cor};">${esc(tB.nome)}</span>
+            <div class="bh-score-box">
+              ${m.placar_a}<span>×</span>${m.placar_b}
+            </div>
+            <div class="bh-scoreline-team is-right">
+              ${tB.logo_url ? `<img src="${esc(tB.logo_url)}" alt="${esc(tB.nome)}">` : ''}
+              <span style="color:${tB.cor};">${esc(tB.nome)}</span>
             </div>
           </div>
 
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px; flex-wrap:wrap; gap:8px;">
-            <div style="font-size:11px; color:var(--muted);">
-              ⚽ ${mGoals.length} gol(s) anotado(s) na súmula
+          <div class="bh-match-foot">
+            <div class="bh-match-pills">
+              <span>⚽ ${mGoals.length} gol(s)</span>
+              <span>🎴 ${mCards.length} cartão(ões)</span>
+              <span>👥 ${mPresencas.length} confirmado(s)</span>
             </div>
-            <div style="display:flex; gap:8px; align-items:center;">
+            <div class="bh-match-actions">
               <button class="btn btn-secondary" onclick="openSumulaModal('${m.id}')">
                 Abrir Súmula Digital ↗
               </button>
               ${isAdmin ? `
                 <button class="btn btn-outline" onclick="editMatchSchedule('${m.id}')">Editar</button>
-                <button class="btn btn-outline" style="color:#e57373; border-color:#e5737344;" onclick="deleteMatchAction('${m.id}')" title="Retirar partida da súmula e calendário">Excluir</button>
+                <button class="btn btn-outline bh-btn-danger" onclick="deleteMatchAction('${m.id}')" title="Retirar partida da súmula e calendário">Excluir</button>
               ` : ''}
             </div>
           </div>
@@ -2798,30 +2894,42 @@ function renderFinance() {
         </div>
       `;
     } else if (subtab === 'transparencia') {
+      const totalDuesCount = state.mensalidades.length;
+      const paidDuesCount = state.mensalidades.filter(m => m.pago).length;
+      const adimplenciaPct = totalDuesCount ? Math.round((paidDuesCount / totalDuesCount) * 100) : 100;
+
       area.innerHTML = `
-        <div class="panel" style="background:#111c16;">
+        <div class="panel">
           <h2 style="font:700 24px var(--display); margin-bottom:6px;">Balanço Geral da Temporada ${activeSeason.ano}</h2>
           <p style="color:var(--muted); font-size:12px; margin-bottom:18px;">
             Prestação de contas aberta a todos os atletas e torcedores do Baba Humildes.
           </p>
 
-          <div class="stats-grid" style="margin-bottom:20px;">
+          <div class="stats-grid" style="margin-bottom:16px;">
             <div class="stat-card">
               <div class="stat-label">TOTAL ARRECADADO</div>
-              <div class="stat-value" style="color:#8ce4a6;">${money(totalPaid)}</div>
+              <div class="stat-value bh-text-green">${money(totalPaid)}</div>
             </div>
             <div class="stat-card">
               <div class="stat-label">TOTAL DE DESPESAS</div>
-              <div class="stat-value" style="color:#f78d88;">${money(totalExpenses)}</div>
+              <div class="stat-value bh-text-red">${money(totalExpenses)}</div>
             </div>
             <div class="stat-card">
               <div class="stat-label">SALDO LÍQUIDO</div>
-              <div class="stat-value" style="color:${balance >= 0 ? 'var(--gold)' : '#dc7772'};">${money(balance)}</div>
+              <div class="stat-value ${balance >= 0 ? 'bh-text-gold' : 'bh-text-red'}">${money(balance)}</div>
             </div>
             <div class="stat-card">
               <div class="stat-label">PENDENTE DE COBRANÇA</div>
-              <div class="stat-value" style="color:#ffd874;">${money(totalPending)}</div>
+              <div class="stat-value bh-text-gold">${money(totalPending)}</div>
             </div>
+          </div>
+
+          <div class="bh-adimplencia-box">
+            <div class="bh-adimplencia-head">
+              <span>Taxa de Adimplência das Mensalidades (${paidDuesCount}/${totalDuesCount})</span>
+              <span class="bh-text-green">${adimplenciaPct}%</span>
+            </div>
+            <div class="bh-fin-track"><i class="is-green" style="width:${adimplenciaPct}%"></i></div>
           </div>
         </div>
       `;
@@ -3811,7 +3919,7 @@ function renderAthleteProfile() {
           <div><span class="eyebrow">AGENDA</span><h2>Confirmação para o Próximo Jogo</h2></div>
         </div>
         ${nextM ? `
-          <div style="background:#0e1913; padding:16px; border-radius:10px; border:1px solid var(--line); margin-bottom:14px;">
+          <div class="bh-panel-dark" style="margin-bottom:14px;">
             <div style="font-size:12px; color:var(--gold); font-weight:700; margin-bottom:6px;">
               📅 ${new Date(nextM.data + 'T12:00:00Z').toLocaleDateString('pt-BR')} • ${nextM.hora || '07:30'}
             </div>
@@ -3869,38 +3977,39 @@ function renderAthleteProfile() {
 
 function showAdminControlPanel() {
   showAdmin(`
-    <h2 style="color:var(--gold);">⚡ Painel da Diretoria</h2>
-    <p style="color:var(--muted); font-size:.9rem; margin-bottom:16px;">Baba Humildes • Temporada ${getActiveTemporada().ano}</p>
+    <div class="eyebrow">CENTRO DE COMANDO</div>
+    <h2 class="bh-text-gold" style="margin-top:4px;">⚡ Painel da Diretoria</h2>
+    <p style="color:var(--muted); font-size:.9rem; margin-bottom:14px;">Baba Humildes • Temporada ${getActiveTemporada().ano}</p>
 
-    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:16px 0;">
-      <button class="btn btn-secondary" onclick="$('#adminDialog').close(); editAthleteModal();">
-        👤 Novo Atleta
+    <div class="bh-admin-grid">
+      <button class="bh-admin-tile" onclick="$('#adminDialog').close(); editAthleteModal();">
+        <i>👤</i><span>Novo Atleta</span>
       </button>
-      <button class="btn btn-secondary" onclick="$('#adminDialog').close(); editMatchSchedule();">
-        ⚽ Nova Partida
+      <button class="bh-admin-tile" onclick="$('#adminDialog').close(); editMatchSchedule();">
+        <i>⚽</i><span>Nova Partida</span>
       </button>
-      <button class="btn btn-secondary" onclick="$('#adminDialog').close(); batchGenerateDuesModal();">
-        💳 Gerar Mensalidades
+      <button class="bh-admin-tile" onclick="$('#adminDialog').close(); batchGenerateDuesModal();">
+        <i>💳</i><span>Gerar Mensalidades</span>
       </button>
-      <button class="btn btn-secondary" onclick="$('#adminDialog').close(); newExpenseModal();">
-        🧾 Nova Despesa
+      <button class="bh-admin-tile" onclick="$('#adminDialog').close(); newExpenseModal();">
+        <i>🧾</i><span>Nova Despesa</span>
       </button>
-      <button class="btn btn-secondary" onclick="$('#adminDialog').close(); editNoticeModal();">
-        📢 Publicar Aviso
+      <button class="bh-admin-tile" onclick="$('#adminDialog').close(); editNoticeModal();">
+        <i>📢</i><span>Publicar Aviso</span>
       </button>
-      <button class="btn btn-secondary" onclick="$('#adminDialog').close(); editJuizModal();">
-        ⚖ Cadastrar Árbitro
+      <button class="bh-admin-tile" onclick="$('#adminDialog').close(); editJuizModal();">
+        <i>⚖</i><span>Cadastrar Árbitro</span>
       </button>
-      <button class="btn btn-secondary" onclick="editSeasonModal();">
-        ⚙ Configurar Temporada
+      <button class="bh-admin-tile" onclick="editSeasonModal();">
+        <i>⚙</i><span>Configurar Temporada</span>
       </button>
-      <button class="btn btn-secondary" onclick="resetDemoDataConfirm();">
-        🔄 Restaurar Dados Demo
+      <button class="bh-admin-tile" onclick="resetDemoDataConfirm();">
+        <i>🔄</i><span>Restaurar Dados Demo</span>
       </button>
     </div>
 
-    <div class="modal-actions" style="margin-top:20px; border-top:1px solid var(--line); padding-top:14px;">
-      <button type="button" class="btn-outline" onclick="logoutAdmin()">🔒 Encerrar Sessão</button>
+    <div class="modal-actions" style="margin-top:18px; border-top:1px solid var(--line); padding-top:14px;">
+      <button type="button" class="btn-outline bh-btn-danger" onclick="logoutAdmin()">🔒 Encerrar Sessão</button>
       <button type="button" class="btn-secondary" data-close>Fechar</button>
     </div>
   `);
