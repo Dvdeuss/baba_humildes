@@ -4,27 +4,38 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#102019" />
+  <meta name="theme-color" content="#070f19" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="description" content="Portal oficial do Baba Humildes da Palestina, Salvador - BA: elenco, partidas, súmula, estatísticas, disciplina e transparência financeira." />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="BABA HUMILDES | Palestina - Salvador" />
+  <meta property="og:description" content="Elenco, partidas, súmula, estatísticas e transparência financeira do Baba Humildes." />
+  <meta property="og:image" content="./public/escudo-baba-humildes-web.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="icon" type="image/png" href="./public/favicon.png" />
   <title>BABA HUMILDES | Palestina - Salvador</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preload" as="image" href="./public/escudo-baba-humildes-web.png">
   <link
     href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800&family=DM+Sans:wght@400;500;600;700&display=swap"
     rel="stylesheet">
-  <link rel="stylesheet" href="./styles.css" />
+  <link rel="stylesheet" href="./styles.css?v=20261125k" />
+  <link rel="stylesheet" href="./visual.css?v=20261125v4" />
 </head>
 
 <body>
+  <a class="skip-link" href="#appContent">Pular para o conteúdo</a>
   <div class="app-shell">
     <aside class="sidebar" id="sidebar">
       <a class="brand" href="#inicio" aria-label="Baba Humildes início">
         <div class="brand-mark">
-          <img src="./public/escudo-baba-humildes-4k.png" alt="Escudo Baba Humildes">
+          <img src="./public/escudo-baba-humildes-web.png" alt="Escudo Baba Humildes" width="52" height="56" decoding="async">
         </div>
         <div><strong>BABA <span>HUMILDES</span></strong><small>PALESTINA • SALVADOR</small></div>
       </a>
       <div class="side-label">MENU PRINCIPAL</div>
-      <nav id="navigation">
+      <nav id="navigation" aria-label="Menu principal">
         <button class="nav-item active" data-page="inicio"><span>⌂</span> Visão geral</button>
         <button class="nav-item" data-page="atletas"><span>♙</span> Atletas & Elenco</button>
         <button class="nav-item" data-page="times"><span>⚑</span> Times & Tabela</button>
@@ -33,6 +44,7 @@
         <button class="nav-item" data-page="financeiro"><span>＄</span> Financeiro</button>
         <button class="nav-item" data-page="avisos"><span>📢</span> Avisos Oficiais</button>
         <button class="nav-item" data-page="juizes"><span>⚖</span> Quadro de Árbitros</button>
+        <button class="nav-item" data-page="memorias"><span>◈</span> Memórias do Baba</button>
       </nav>
       <div class="sidebar-bottom">
         <div class="sunday-card">
@@ -43,7 +55,7 @@
           </div>
         </div>
         <button class="admin-entry" id="adminButton">
-          ⚙ Área administrativa <span id="adminStatus">Entrar →</span>
+          ⚙ Área administrativa <span id="adminStatus" aria-live="polite">Entrar →</span>
         </button>
         <button class="admin-entry athlete-entry-btn" id="athleteButton">
           ⚽ Área do Atleta <span>Entrar →</span>
@@ -62,18 +74,18 @@
           <span class="season-badge" id="topbarSeasonBadge">Temporada 2026</span>
           <span class="public-pill"><i></i> Portal público</span>
           <div class="avatar" id="topbarAvatar" title="Baba Humildes">
-            <img src="./public/escudo-baba-humildes-4k.png" alt="Baba Humildes">
+            <img src="./public/escudo-baba-humildes-web.png" alt="Baba Humildes" width="42" height="42" decoding="async">
           </div>
         </div>
       </header>
       
-      <div class="content" id="appContent">
-        <!-- O conteúdo dinâmico de cada página é renderizado aqui pelo app.js -->
+      <div class="content" id="appContent" tabindex="-1" aria-busy="true">
+        <div class="loading-state" role="status">Carregando portal...</div>
       </div>
     </main>
   </div>
 
-  <div class="toast" id="toast" role="status"></div>
+  <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
   
   <dialog id="adminDialog" class="modal">
     <form method="dialog" class="modal-close"><button aria-label="Fechar">×</button></form>
@@ -85,7 +97,13 @@
     <div id="editDialogBody"></div>
   </dialog>
 
-  <script type="module" src="./app.js"></script>
+  <dialog id="memoryViewerDialog" class="modal wide">
+    <form method="dialog" class="modal-close"><button aria-label="Fechar">×</button></form>
+    <div id="memoryViewerBody"></div>
+  </dialog>
+
+  <script type="module" src="./app.js?v=20261125v4"></script>
+  <script type="module" src="./visual.js?v=20261125v2"></script>
 </body>
 
 </html>

@@ -9,6 +9,8 @@ const $$ = (s, root = document) => Array.from(root.querySelectorAll(s));
 const money = n => Number(n || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const id = () => crypto.randomUUID();
+const MEMORIA_YEARS = [2027, 2028, 2029];
+const memoryCarouselSources = {};
 
 let db = null;
 let session = null;
@@ -35,7 +37,8 @@ let state = {
   presencas: [],
   mensalidades: [],
   despesas: [],
-  avisos: []
+  avisos: [],
+  memorias: []
 };
 
 const demo = !SUPABASE_URL || !SUPABASE_ANON_KEY;
@@ -99,7 +102,12 @@ async function init() {
 
   updateAdminStatus();
   bindNavigation();
-  renderPage('inicio');
+  try {
+    renderPage('inicio');
+  } finally {
+    const content = $('#appContent');
+    if (content) content.setAttribute('aria-busy', 'false');
+  }
 }
 
 function getActiveTemporada() {
@@ -327,6 +335,15 @@ function populateDemoData() {
       destaque: false
     }
   ];
+
+  state.memorias = [
+    { id: 'mem-27-1', ano: 2027, categoria: 'Temporada', titulo: 'Abertura da Temporada 2027', descricao: 'Registro da primeira reunião da temporada, com convocação do elenco e apresentação da programação de jogos.', data: '2027-02-14', imagem_url: '' },
+    { id: 'mem-27-2', ano: 2027, categoria: 'Comunidade', titulo: 'Encontro com a Comunidade', descricao: 'Momento de integração entre atletas, famílias e torcedores na Palestina.', data: '2027-06-20', imagem_url: '' },
+    { id: 'mem-28-1', ano: 2028, categoria: 'Partida', titulo: 'Clássico de Domingo', descricao: 'Uma tarde de futebol com o elenco completo, resenha após o apito final e registro em família.', data: '2028-04-09', imagem_url: '' },
+    { id: 'mem-28-2', ano: 2028, categoria: 'Conquista', titulo: 'Vitória Memorável', descricao: 'Resultado que ficou na história do grupo e fortaleceu a união do Baba Humildes.', data: '2028-10-22', imagem_url: '' },
+    { id: 'mem-29-1', ano: 2029, categoria: 'Homenagem', titulo: 'Homenagem aos Fundadores', descricao: 'Reconhecimento a quem ajudou a construir o Baba Humildes e a manter vivo o espírito do grupo.', data: '2029-03-11', imagem_url: '' },
+    { id: 'mem-29-2', ano: 2029, categoria: 'Temporada', titulo: 'Encerramento da Temporada', descricao: 'Balanço do ano, agradecimentos e planejamento para os próximos desafios.', data: '2029-12-15', imagem_url: '' }
+  ];
 }
 
 async function loadRemote() {
@@ -347,6 +364,7 @@ async function loadRemote() {
     mensalidades:      'mensalidades',
     despesas:          'despesas',
     avisos:            'avisos',
+    memorias:          'memorias',
   };
 
   for (const [stateKey, tableName] of Object.entries(tableMap)) {
@@ -378,6 +396,7 @@ const SUPABASE_TABLE_MAP = {
   mensalidades:      'mensalidades',
   despesas:          'despesas',
   avisos:            'avisos',
+  memorias:          'memorias',
 };
 
 async function saveRecord(table, row, remove = false) {
@@ -407,11 +426,15 @@ async function saveRecord(table, row, remove = false) {
   }
 }
 
-function notify(msg) {
+function notify(msg, type = 'info') {
   const t = $('#toast');
+  if (!t) return;
   t.textContent = msg;
+  t.classList.toggle('error', type === 'error');
+  t.setAttribute('aria-live', type === 'error' ? 'assertive' : 'polite');
   t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 3000);
+  clearTimeout(t._notifyTimer);
+  t._notifyTimer = setTimeout(() => t.classList.remove('show'), 3000);
 }
 
 // ------------------------------------------------------------------------------
@@ -659,7 +682,13 @@ function bindNavigation() {
 
 function setTitle(title) {
   if ($('#pageTitle')) $('#pageTitle').textContent = title;
-  $$('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.page === currentPage));
+  document.title = `${title} • BABA HUMILDES`;
+  $$('.nav-item').forEach(b => {
+    const active = b.dataset.page === currentPage;
+    b.classList.toggle('active', active);
+    if (active) b.setAttribute('aria-current', 'page');
+    else b.removeAttribute('aria-current');
+  });
   if ($('#sidebar')) $('#sidebar').classList.remove('open');
 }
 
@@ -674,6 +703,7 @@ function renderPage(page) {
     financeiro: 'Financeiro & Transparência',
     avisos: 'Avisos Oficiais',
     juizes: 'Quadro de Árbitros',
+    memorias: 'Memórias do Baba',
     atleta: 'Área do Atleta'
   };
   setTitle(titles[page] || 'Visão geral');
@@ -687,8 +717,12 @@ function renderPage(page) {
     case 'financeiro': renderFinance(); break;
     case 'avisos': renderAvisos(); break;
     case 'juizes': renderJuizes(); break;
+    case 'memorias': renderMemorias(); break;
     default: renderHome(); break;
   }
+
+  const content = $('#appContent');
+  if (content) content.setAttribute('aria-busy', 'false');
 }
 
 function updateAdminStatus() {
@@ -736,20 +770,20 @@ function renderHome() {
           <button class="btn btn-outline" data-goto="atletas">Conhecer o elenco</button>
         </div>
       </div>
-      <div class="hero-watermark">HUMILDES</div>
+      <div class="hero-watermark" aria-hidden="true">HUMILDES</div>
     </section>
 
     ${featuredNotice ? `
       <div class="featured-home-notice">
-        <div style="display:flex; align-items:center; gap:12px;">
+        <div class="notice-body-row">
           <span class="pin">📌</span>
           <div>
-            <div style="font-size:10px; color:var(--gold); font-weight:700; letter-spacing:1px;">COMUNICADO OFICIAL • ${esc(featuredNotice.tipo.toUpperCase())}</div>
-            <div style="font:700 16px var(--display); color:#fff;">${esc(featuredNotice.titulo)}</div>
-            <div style="font-size:11px; color:#c5d5cb; margin-top:3px;">${esc(featuredNotice.conteudo.slice(0, 140))}${featuredNotice.conteudo.length > 140 ? '...' : ''}</div>
+            <div class="notice-kicker">COMUNICADO OFICIAL • ${esc(featuredNotice.tipo.toUpperCase())}</div>
+            <div class="notice-title">${esc(featuredNotice.titulo)}</div>
+            <div class="notice-excerpt">${esc(featuredNotice.conteudo.slice(0, 140))}${featuredNotice.conteudo.length > 140 ? '...' : ''}</div>
           </div>
         </div>
-        <button class="btn btn-secondary" data-goto="avisos" style="flex-shrink:0;">Mural de avisos →</button>
+        <button class="btn btn-secondary notice-action" data-goto="avisos">Mural de avisos →</button>
       </div>
     ` : ''}
 
@@ -766,8 +800,8 @@ function renderHome() {
           <div class="matchup-logo">
             <img src="./public/escudo-internacional.svg" alt="Escudo Internacional">
           </div>
-          <h3 style="color:#e52329;">Internacional</h3>
-          <span style="color:#e52329;">COLORADO • TIME A</span>
+          <h3 class="team-a-name">Internacional</h3>
+          <span class="team-a-tag">COLORADO • TIME A</span>
         </div>
 
         <div class="matchup-vs">VS</div>
@@ -776,8 +810,8 @@ function renderHome() {
           <div class="matchup-logo">
             <img src="./public/escudo-gremio.svg" alt="Escudo Grêmio">
           </div>
-          <h3 style="color:#0d80bf;">Grêmio</h3>
-          <span style="color:#0d80bf;">TRICOLOR • TIME B</span>
+          <h3 class="team-b-name">Grêmio</h3>
+          <span class="team-b-tag">TRICOLOR • TIME B</span>
         </div>
       </div>
 
@@ -787,22 +821,22 @@ function renderHome() {
     <section class="stats-grid">
       <div class="stat-card">
         <div class="stat-label">ELENCO DA TEMPORADA</div>
-        <div class="stat-value">${totalAthletes} <small style="font-size:12px; color:var(--muted);">atletas</small></div>
+        <div class="stat-value">${totalAthletes} <small class="stat-unit">atletas</small></div>
         <div class="stat-icon">👥</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">JOGOS REALIZADOS</div>
-        <div class="stat-value">${finishedMatchesCount} <small style="font-size:12px; color:var(--muted);">rodadas</small></div>
+        <div class="stat-value">${finishedMatchesCount} <small class="stat-unit">rodadas</small></div>
         <div class="stat-icon">⏱</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">GOLS NA TEMPORADA</div>
-        <div class="stat-value">${totalGoals} <small style="font-size:12px; color:var(--muted); font-weight:400;">(${avgGoals}/jogo)</small></div>
+        <div class="stat-value">${totalGoals} <small class="stat-unit">(${avgGoals}/jogo)</small></div>
         <div class="stat-icon">⚽</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">CAIXA DO BABA</div>
-        <div class="stat-value" style="color:${balance >= 0 ? 'var(--gold)' : '#dc7772'};">${money(balance)}</div>
+        <div class="stat-value is-balance ${balance >= 0 ? 'positive' : 'negative'}">${money(balance)}</div>
         <div class="stat-icon">＄</div>
       </div>
     </section>
@@ -833,9 +867,9 @@ function renderHome() {
           <div><span class="eyebrow">RANKINGS</span><h2>Artilharia & Garçons</h2></div>
           <button class="text-button" data-goto="estatisticas">Ver todos →</button>
         </div>
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+        <div class="rank-columns">
           <div>
-            <div style="font-size:10px; font-weight:700; color:var(--gold); margin-bottom:8px;">⚽ ARTILHEIROS</div>
+            <div class="rank-column-title">⚽ ARTILHEIROS</div>
             ${topScorers.length ? topScorers.map((s, i) => `
               <div class="rank-row">
                 <span class="rank-number">${String(i+1).padStart(2,'0')}</span>
@@ -845,7 +879,7 @@ function renderHome() {
             `).join('') : '<div class="empty-state compact">Sem gols registrados ainda.</div>'}
           </div>
           <div>
-            <div style="font-size:10px; font-weight:700; color:var(--gold); margin-bottom:8px;">🎯 ASSISTÊNCIAS</div>
+            <div class="rank-column-title">🎯 ASSISTÊNCIAS</div>
             ${topAssists.length ? topAssists.map((s, i) => `
               <div class="rank-row">
                 <span class="rank-number">${String(i+1).padStart(2,'0')}</span>
@@ -879,18 +913,18 @@ function renderHome() {
                 return `
                 <tr>
                   <td>
-                    <div style="display:flex; align-items:center; gap:10px;">
-                      <span class="standings-pos" style="min-width:18px;">${idx + 1}º</span>
-                      <div style="width:26px; height:26px; min-width:26px; display:flex; align-items:center; justify-content:center;">
-                        ${logo ? `<img src="${esc(logo)}" alt="${esc(row.team.nome)}" style="width:100%; height:100%; object-fit:contain; filter:drop-shadow(0 2px 4px rgba(0,0,0,0.5));">` : `<span class="team-badge" style="border:1px solid ${row.team.cor}; color:${row.team.cor};">${row.team.badge}</span>`}
+                    <div class="standings-team-cell">
+                      <span class="standings-pos">${idx + 1}º</span>
+                      <div class="standings-logo">
+                        ${logo ? `<img src="${esc(logo)}" alt="${esc(row.team.nome)}">` : `<span class="team-badge" style="border:1px solid ${row.team.cor}; color:${row.team.cor};">${row.team.badge}</span>`}
                       </div>
-                      <strong style="font-size:14px; color:#fff;">${esc(row.team.nome)}</strong>
+                      <strong class="standings-name">${esc(row.team.nome)}</strong>
                     </div>
                   </td>
                   <td class="standings-pts">${row.pontos}</td>
                   <td>${row.jogos}</td>
                   <td>${row.vitorias}</td>
-                  <td style="color:${row.saldoGols > 0 ? '#8ce4a6' : row.saldoGols < 0 ? '#f78d88' : 'inherit'}; font-weight:600;">
+                  <td class="standings-goal-diff ${row.saldoGols > 0 ? 'positive' : row.saldoGols < 0 ? 'negative' : ''}">
                     ${row.saldoGols > 0 ? '+' : ''}${row.saldoGols}
                   </td>
                 </tr>
@@ -925,28 +959,28 @@ function renderNextMatchCard(match) {
   const formattedDate = new Date(match.data + 'T12:00:00Z').toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' });
 
   return `
-    <div style="padding:10px 0;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
-        <span style="font-size:12px; color:var(--gold); font-weight:700;">📅 ${formattedDate} • ${match.hora || '07:30'}</span>
+    <div class="match-card">
+      <div class="match-meta">
+        <span class="match-date">📅 ${formattedDate} • ${match.hora || '07:30'}</span>
         ${juiz ? `<span class="badge-tag info">⚖ Árbitro: ${esc(juiz.nome)}</span>` : ''}
       </div>
 
-      <div style="display:flex; align-items:center; justify-content:space-around; background:#0f1a14; padding:18px; border-radius:10px; border:1px solid var(--line); margin-bottom:15px;">
-        <div style="display:flex; flex-direction:column; align-items:center; gap:6px;">
-          ${teamA.logo_url ? `<img src="${esc(teamA.logo_url)}" alt="${esc(teamA.nome)}" style="width:52px; height:52px; object-fit:contain; filter:drop-shadow(0 4px 6px #0007);">` : ''}
-          <strong style="font:800 20px var(--display); color:${teamA.cor};">${esc(teamA.nome)}</strong>
-          <span style="font-size:9px; color:var(--muted); letter-spacing:1px;">MANDANTE</span>
+      <div class="match-stage">
+        <div class="match-side">
+          ${teamA.logo_url ? `<img src="${esc(teamA.logo_url)}" alt="${esc(teamA.nome)}" class="match-logo">` : ''}
+          <strong class="match-team-name" style="color:${teamA.cor};">${esc(teamA.nome)}</strong>
+          <span class="match-role">MANDANTE</span>
         </div>
-        <div style="font:800 28px var(--display); color:var(--gold);">VS</div>
-        <div style="display:flex; flex-direction:column; align-items:center; gap:6px;">
-          ${teamB.logo_url ? `<img src="${esc(teamB.logo_url)}" alt="${esc(teamB.nome)}" style="width:52px; height:52px; object-fit:contain; filter:drop-shadow(0 4px 6px #0007);">` : ''}
-          <strong style="font:800 20px var(--display); color:${teamB.cor};">${esc(teamB.nome)}</strong>
-          <span style="font-size:9px; color:var(--muted); letter-spacing:1px;">VISITANTE</span>
+        <div class="match-vs">VS</div>
+        <div class="match-side">
+          ${teamB.logo_url ? `<img src="${esc(teamB.logo_url)}" alt="${esc(teamB.nome)}" class="match-logo">` : ''}
+          <strong class="match-team-name" style="color:${teamB.cor};">${esc(teamB.nome)}</strong>
+          <span class="match-role">VISITANTE</span>
         </div>
       </div>
 
-      <div style="display:flex; justify-content:space-between; align-items:center;">
-        <div style="font-size:11px; color:var(--muted);">
+      <div class="match-foot">
+        <div class="match-presence">
           ⚽ <strong>${confirmedPlayers.length}</strong> atleta(s) confirmados para este jogo.
         </div>
         <button class="btn btn-gold" onclick="openPublicAttendanceModal('${match.id}')">
@@ -1214,7 +1248,7 @@ function editAthleteModal(athleteId = '') {
       notify('Atleta salvo com sucesso!');
       renderPage('atletas');
     } catch (err) {
-      notify(err.message);
+      notify(err.message, 'error');
     }
   };
 }
@@ -1227,7 +1261,7 @@ async function deleteAthleteAction(aid) {
     notify('Atleta excluído.');
     renderPage('atletas');
   } catch (err) {
-    notify(err.message);
+    notify(err.message, 'error');
   }
 }
 
@@ -1532,7 +1566,7 @@ function editMatchSchedule(matchId = '') {
       notify('Partida agendada com sucesso!');
       renderPage('partidas');
     } catch (err) {
-      notify(err.message);
+      notify(err.message, 'error');
     }
   };
 }
@@ -1573,7 +1607,7 @@ async function deleteMatchAction(matchId) {
     notify('Partida retirada do calendário e da súmula com sucesso!');
     renderPage('partidas');
   } catch (err) {
-    notify(err.message);
+    notify(err.message, 'error');
   }
 }
 
@@ -1757,7 +1791,7 @@ function addGoalModal(matchId) {
       openSumulaModal(matchId);
       renderPage('partidas');
     } catch (err) {
-      notify(err.message);
+      notify(err.message, 'error');
     }
   };
 }
@@ -1818,7 +1852,7 @@ function addCardModal(matchId) {
       openSumulaModal(matchId);
       renderPage('partidas');
     } catch (err) {
-      notify(err.message);
+      notify(err.message, 'error');
     }
   };
 }
@@ -1836,7 +1870,7 @@ async function removeGoalAction(goalId, matchId) {
     openSumulaModal(matchId);
     renderPage('partidas');
   } catch (err) {
-    notify(err.message);
+    notify(err.message, 'error');
   }
 }
 
@@ -1848,7 +1882,7 @@ async function removeCardAction(cardId, matchId) {
     openSumulaModal(matchId);
     renderPage('partidas');
   } catch (err) {
-    notify(err.message);
+    notify(err.message, 'error');
   }
 }
 
@@ -1862,7 +1896,7 @@ async function toggleFinishMatch(matchId, shouldFinish) {
     openSumulaModal(matchId);
     renderPage('partidas');
   } catch (err) {
-    notify(err.message);
+    notify(err.message, 'error');
   }
 }
 
@@ -1963,7 +1997,7 @@ function openPublicAttendanceModal(matchId) {
         notify('Presença confirmada com sucesso! Bom jogo!');
         renderPage(currentPage);
       } catch (err) {
-        notify(err.message);
+        notify(err.message, 'error');
       }
     };
   };
@@ -1982,7 +2016,7 @@ async function toggleAttendanceAdmin(matchId, athleteId, status) {
     notify('Presença atualizada.');
     openSumulaModal(matchId);
   } catch (err) {
-    notify(err.message);
+    notify(err.message, 'error');
   }
 }
 
@@ -2031,7 +2065,7 @@ async function quickAddGoalForAthlete(athleteId) {
     notify(`⚽ +1 Gol adicionado para ${athlete.apelido}!`);
     renderPage('estatisticas');
   } catch (err) {
-    notify(err.message);
+    notify(err.message, 'error');
   }
 }
 
@@ -2055,7 +2089,7 @@ async function quickRemoveGoalForAthlete(athleteId) {
     notify(`Gol de ${athlete.apelido} removido.`);
     renderPage('estatisticas');
   } catch (err) {
-    notify(err.message);
+    notify(err.message, 'error');
   }
 }
 
@@ -2076,7 +2110,7 @@ async function quickAddAssistForAthlete(athleteId) {
     notify(`🎯 +1 Assistência adicionada para ${athlete.apelido}!`);
     renderPage('estatisticas');
   } catch (err) {
-    notify(err.message);
+    notify(err.message, 'error');
   }
 }
 
@@ -2096,7 +2130,7 @@ async function quickRemoveAssistForAthlete(athleteId) {
     notify(`Assistência de ${athlete.apelido} removida.`);
     renderPage('estatisticas');
   } catch (err) {
-    notify(err.message);
+    notify(err.message, 'error');
   }
 }
 
@@ -2125,7 +2159,7 @@ async function quickAddCardForAthlete(athleteId, type = 'Amarelo') {
     notify(`${type === 'Vermelho' ? '🟥 Cartão Vermelho' : '🟨 Cartão Amarelo'} aplicado para ${athlete.apelido}!`);
     renderPage('estatisticas');
   } catch (err) {
-    notify(err.message);
+    notify(err.message, 'error');
   }
 }
 
@@ -2145,7 +2179,7 @@ async function quickRemoveCardForAthlete(athleteId) {
     notify(`Cartão de ${athlete.apelido} removido.`);
     renderPage('estatisticas');
   } catch (err) {
-    notify(err.message);
+    notify(err.message, 'error');
   }
 }
 
@@ -2260,7 +2294,7 @@ function openStatsEntryModal(defaultType = 'gol') {
       $('#adminDialog').close();
       renderPage('estatisticas');
     } catch (err) {
-      notify(err.message);
+      notify(err.message, 'error');
     }
   };
 }
@@ -3022,7 +3056,7 @@ function batchDeleteDuesModal() {
       notify(`Lote do Mês ${String(mes).padStart(2,'0')} excluído com sucesso (${toDelete.length} mensalidade(s) removida(s)).`);
       renderPage('financeiro');
     } catch (err) {
-      notify(err.message);
+      notify(err.message, 'error');
     }
   };
 }
@@ -3039,7 +3073,7 @@ async function deleteDuesAction(duesId) {
     notify('Mensalidade excluída com sucesso.');
     renderPage('financeiro');
   } catch (err) {
-    notify(err.message);
+    notify(err.message, 'error');
   }
 }
 
@@ -3107,7 +3141,7 @@ function newExpenseModal() {
       notify('Despesa registrada com sucesso!');
       renderPage('financeiro');
     } catch (err) {
-      notify(err.message);
+      notify(err.message, 'error');
     }
   };
 }
@@ -3119,7 +3153,7 @@ async function deleteExpenseAction(expId) {
     notify('Despesa excluída.');
     renderPage('financeiro');
   } catch (err) {
-    notify(err.message);
+    notify(err.message, 'error');
   }
 }
 
@@ -3258,7 +3292,7 @@ function editNoticeModal(noticeId = '') {
       notify('Comunicado salvo!');
       renderPage('avisos');
     } catch (err) {
-      notify(err.message);
+      notify(err.message, 'error');
     }
   };
 }
@@ -3270,7 +3304,7 @@ async function deleteNoticeAction(noticeId) {
     notify('Aviso excluído.');
     renderPage('avisos');
   } catch (err) {
-    notify(err.message);
+    notify(err.message, 'error');
   }
 }
 
@@ -3361,7 +3395,7 @@ function editJuizModal(juizId = '') {
       notify('Árbitro salvo com sucesso!');
       renderPage('juizes');
     } catch (err) {
-      notify(err.message);
+      notify(err.message, 'error');
     }
   };
 }
@@ -3373,7 +3407,330 @@ async function deleteJuizAction(juizId) {
     notify('Árbitro excluído.');
     renderPage('juizes');
   } catch (err) {
-    notify(err.message);
+    notify(err.message, 'error');
+  }
+}
+
+function openMemoryDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('bh-memory-images', 1);
+    req.onupgradeneeded = () => {
+      const database = req.result;
+      if (!database.objectStoreNames.contains('images')) database.createObjectStore('images');
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function saveMemoryImages(key, blobs) {
+  const database = await openMemoryDb();
+  return new Promise((resolve, reject) => {
+    const tx = database.transaction('images', 'readwrite');
+    tx.objectStore('images').put(blobs, key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function getMemoryImages(key) {
+  const database = await openMemoryDb();
+  return new Promise((resolve, reject) => {
+    const tx = database.transaction('images', 'readonly');
+    const req = tx.objectStore('images').get(key);
+    req.onsuccess = () => {
+      const value = req.result;
+      if (!value) return resolve([]);
+      resolve(Array.isArray(value) ? value : [value]);
+    };
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function renderMemorias() {
+  const memorias = [...(state.memorias || [])].sort((a, b) => new Date(b.data || 0) - new Date(a.data || 0));
+  const fmtDate = value => {
+    if (!value) return 'Sem data registrada';
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? esc(value) : d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
+  };
+
+  $('#appContent').innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="eyebrow">ARQUIVO HISTÓRICO DO CLUBE</div>
+        <h1>Memórias do Baba</h1>
+        <p>Registros organizados ano a ano: 2027, 2028 e 2029. Fotos, conquistas e momentos da comunidade.</p>
+      </div>
+      ${isAdmin ? `<button class="btn btn-gold" id="btnNewMemoria">+ Nova Memória</button>` : ''}
+    </div>
+
+    <div class="memories-years">
+      ${MEMORIA_YEARS.map(ano => {
+        const itens = memorias.filter(m => Number(m.ano) === ano);
+        return `
+          <section class="memory-year" aria-labelledby="memories-${ano}">
+            <div class="memory-year-head">
+              <div>
+                <div class="eyebrow">ARQUIVO DA TEMPORADA</div>
+                <h2 id="memories-${ano}">${ano}</h2>
+                <p>${itens.length} ${itens.length === 1 ? 'registro guardado' : 'registros guardados'}</p>
+              </div>
+              ${isAdmin ? `<button class="btn btn-secondary" data-new-memory="${ano}">+ Nova memória</button>` : ''}
+            </div>
+            <div class="memories-grid">
+              ${itens.length ? itens.map(m => `
+                <article class="memory-card">
+                  ${m.imagem_url ? `
+                    <div class="memory-carousel" data-carousel-id="${esc(m.id)}" tabindex="0" role="region" aria-label="Carrossel de imagens de ${esc(m.titulo)}" aria-roledescription="Carrossel 3D de imagens">
+                      <div class="memory-carousel-viewport" data-carousel-viewport></div>
+                      <button class="carousel-nav prev" type="button" data-carousel-dir="-1" aria-label="Imagem anterior" hidden>‹</button>
+                      <button class="carousel-nav next" type="button" data-carousel-dir="1" aria-label="Próxima imagem" hidden>›</button>
+                      <span class="carousel-counter" data-carousel-counter aria-live="polite" hidden></span>
+                      <div class="carousel-dots" data-carousel-dots hidden></div>
+                      <span class="memory-image-fallback" hidden>Imagem salva, mas não pôde ser exibida.</span>
+                    </div>` : ''}
+                  <span class="badge-tag info">${esc(m.categoria || 'Registro')}</span>
+                  <h3>${esc(m.titulo)}</h3>
+                  <p>${esc(m.descricao)}</p>
+                  <div class="memory-meta">📅 ${fmtDate(m.data)}</div>
+                  ${isAdmin ? `
+                    <div class="memory-actions row-actions">
+                      <button onclick="editMemoriaModal('${m.id}')">Editar</button> •
+                      <button onclick="deleteMemoriaAction('${m.id}')" style="color:#e57373;">Excluir</button>
+                    </div>` : ''}
+                </article>
+              `).join('') : `<div class="empty-state" style="grid-column:1/-1;">Nenhuma memória de ${ano} publicada ainda.</div>`}
+            </div>
+          </section>`;
+      }).join('')}
+    </div>
+  `;
+
+  if ($('#btnNewMemoria')) $('#btnNewMemoria').onclick = () => editMemoriaModal();
+  $$('[data-new-memory]').forEach(btn => {
+    btn.onclick = () => editMemoriaModal('', Number(btn.dataset.newMemory));
+  });
+
+  hydrateMemoryCarousels();
+}
+
+async function hydrateMemoryCarousels() {
+  for (const carousel of $$('.memory-carousel')) {
+    const memoria = (state.memorias || []).find(x => x.id === carousel.dataset.carouselId);
+    if (!memoria || !memoria.imagem_url) continue;
+
+    let sources = [];
+    try {
+      if (memoria.imagem_url.startsWith('idb:')) {
+        const blobs = await getMemoryImages(memoria.imagem_url.slice(4));
+        sources = blobs.map(blob => URL.createObjectURL(blob));
+      } else {
+        sources = [memoria.imagem_url];
+      }
+    } catch (err) {
+      sources = [];
+    }
+
+    const viewport = $('[data-carousel-viewport]', carousel);
+    const dots = $('[data-carousel-dots]', carousel);
+    const prev = $('[data-carousel-dir="-1"]', carousel);
+    const next = $('[data-carousel-dir="1"]', carousel);
+    const fallback = $('.memory-image-fallback', carousel);
+    if (!viewport) continue;
+
+    if (!sources.length) {
+      if (fallback) fallback.hidden = false;
+      continue;
+    }
+
+    viewport.innerHTML = sources.map((src, i) => `<img class="memory-thumb" src="${esc(src)}" alt="Imagem ${i + 1} de ${esc(memoria.titulo)}" loading="eager" onerror="this.classList.add('broken');">`).join('');
+
+    memoryCarouselSources[memoria.id] = sources;
+
+    const imgs = $$('.memory-thumb', viewport);
+    const counter = $('[data-carousel-counter]', carousel);
+    let index = 0;
+    const show = pos => {
+      index = (pos + imgs.length) % imgs.length;
+      imgs.forEach((img, i) => {
+        let diff = i - index;
+        if (diff > imgs.length / 2) diff -= imgs.length;
+        if (diff < -imgs.length / 2) diff += imgs.length;
+        img.className = 'memory-thumb';
+        if (diff === 0) img.classList.add('active');
+        else if (diff === -1) img.classList.add('prev');
+        else if (diff === 1) img.classList.add('next');
+        else img.classList.add('far');
+      });
+      $$('button', dots).forEach((dot, i) => dot.classList.toggle('active', i === index));
+      if (counter) counter.textContent = `${index + 1} / ${imgs.length}`;
+    };
+
+    show(0);
+
+    imgs.forEach((img, i) => {
+      img.onclick = () => {
+        clearInterval(carousel._autoplay);
+        openMemoryViewer(memoria.id, i);
+      };
+    });
+
+    if (imgs.length > 1) {
+      if (prev) {
+        prev.hidden = false;
+        prev.onclick = () => show(index - 1);
+      }
+      if (next) {
+        next.hidden = false;
+        next.onclick = () => show(index + 1);
+      }
+      if (counter) counter.hidden = false;
+      if (dots) {
+        dots.hidden = false;
+        dots.innerHTML = imgs.map((_, i) => `<button type="button" aria-label="Ir para imagem ${i + 1}" ${i === 0 ? 'class="active"' : ''}></button>`).join('');
+        $$('button', dots).forEach((dot, i) => { dot.onclick = () => show(i); });
+      }
+      carousel.onkeydown = e => {
+        if (e.key === 'ArrowLeft') { e.preventDefault(); show(index - 1); }
+        if (e.key === 'ArrowRight') { e.preventDefault(); show(index + 1); }
+      };
+      clearInterval(carousel._autoplay);
+      const startAutoplay = () => {
+        clearInterval(carousel._autoplay);
+        carousel._autoplay = setInterval(() => show(index + 1), 3500);
+      };
+      carousel.onmouseenter = () => clearInterval(carousel._autoplay);
+      carousel.onmouseleave = startAutoplay;
+      startAutoplay();
+    }
+  }
+}
+
+function openMemoryViewer(memoriaId, index = 0) {
+  const sources = memoryCarouselSources[memoriaId] || [];
+  if (!sources.length) return notify('Imagem indisponível para visualização.', 'error');
+  const dialog = $('#memoryViewerDialog');
+  const body = $('#memoryViewerBody');
+  if (!dialog || !body) return;
+  let current = (index + sources.length) % sources.length;
+  const render = () => {
+    body.innerHTML = `
+      <div class="memory-viewer">
+        <img src="${esc(sources[current])}" alt="Imagem ${current + 1} de ${sources.length}">
+        <div class="memory-viewer-bar">
+          <button type="button" id="viewerPrev" class="carousel-nav prev" aria-label="Imagem anterior" style="position:static;transform:none;">‹</button>
+          <span aria-live="polite">${current + 1} / ${sources.length}</span>
+          <button type="button" id="viewerNext" class="carousel-nav next" aria-label="Próxima imagem" style="position:static;transform:none;">›</button>
+        </div>
+      </div>`;
+    $('#viewerPrev').onclick = () => { current = (current - 1 + sources.length) % sources.length; render(); };
+    $('#viewerNext').onclick = () => { current = (current + 1) % sources.length; render(); };
+  };
+  render();
+  dialog.onkeydown = e => {
+    if (e.key === 'ArrowLeft') { e.preventDefault(); $('#viewerPrev').click(); }
+    if (e.key === 'ArrowRight') { e.preventDefault(); $('#viewerNext').click(); }
+  };
+  dialog.showModal();
+}
+
+function editMemoriaModal(memoriaId = '', ano = MEMORIA_YEARS[0]) {
+  const m = memoriaId ? (state.memorias || []).find(x => x.id === memoriaId) : {};
+  let pendingImages = [];
+  showEdit(`
+    <h2>${m.id ? 'Editar Memória' : 'Nova Memória'}</h2>
+    <form id="memoriaForm">
+      <div class="form-grid">
+        <div class="field">
+          <label>Ano *</label>
+          <select name="ano" required>
+            ${MEMORIA_YEARS.map(y => `<option value="${y}" ${Number(m.ano || ano) === y ? 'selected' : ''}>${y}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field">
+          <label>Categoria</label>
+          <select name="categoria">
+            ${['Temporada', 'Partida', 'Comunidade', 'Conquista', 'Homenagem'].map(c => `<option ${m.categoria === c ? 'selected' : ''}>${c}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <label>Título *</label>
+        <input name="titulo" required value="${esc(m.titulo || '')}" placeholder="Ex: Clássico de Domingo">
+      </div>
+      <div class="field">
+        <label>Descrição *</label>
+        <textarea name="descricao" rows="4" required placeholder="Conte o que aconteceu nesta memória...">${esc(m.descricao || '')}</textarea>
+      </div>
+      <div class="form-grid">
+        <div class="field">
+          <label>Data</label>
+          <input type="date" name="data" value="${esc((m.data || '').slice(0, 10))}">
+        </div>
+        <div class="field">
+          <label>URL da imagem (opcional)</label>
+          <input name="imagem_url" value="${esc(m.imagem_url || '')}" placeholder="https://...">
+        </div>
+      </div>
+      <div class="field">
+        <label>Ou envie imagens do computador (várias de uma vez)</label>
+        <input type="file" name="imagem_file" accept="image/*" multiple>
+        <div id="memoriaPreview" class="memory-preview-grid"></div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" data-close>Cancelar</button>
+        <button type="submit" class="btn-primary">Salvar Memória</button>
+      </div>
+    </form>
+  `);
+
+  $('#memoriaForm [name="imagem_file"]').onchange = e => {
+    const files = Array.from(e.target.files).filter(file => file.type.startsWith('image/'));
+    if (!files.length) {
+      notify('Escolha arquivos de imagem.', 'error');
+      return;
+    }
+    pendingImages = files;
+    $('#memoriaPreview').innerHTML = files.map(file => `<img src="${URL.createObjectURL(file)}" alt="Prévia de ${esc(file.name)}">`).join('');
+    notify(`${files.length} ${files.length === 1 ? 'imagem selecionada' : 'imagens selecionadas'}. Salve a memória para aplicar.`);
+  };
+
+  $('#memoriaForm').onsubmit = async e => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const memoriaId = m.id || id();
+    const imagemUrl = f.get('imagem_url') ? f.get('imagem_url').trim() : '';
+    const memoriaData = {
+      id: memoriaId,
+      ano: Number(f.get('ano')),
+      categoria: f.get('categoria'),
+      titulo: f.get('titulo').trim(),
+      descricao: f.get('descricao').trim(),
+      data: f.get('data') || new Date().toISOString().slice(0, 10),
+      imagem_url: pendingImages.length ? `idb:${memoriaId}` : imagemUrl
+    };
+
+    try {
+      if (pendingImages.length) await saveMemoryImages(memoriaId, pendingImages);
+      await saveRecord('memorias', memoriaData);
+      $('#editDialog').close();
+      notify('Memória salva com sucesso!');
+      renderPage('memorias');
+    } catch (err) {
+      notify(err.message, 'error');
+    }
+  };
+}
+
+async function deleteMemoriaAction(memoriaId) {
+  if (!confirm('Excluir esta memória?')) return;
+  try {
+    await saveRecord('memorias', { id: memoriaId }, true);
+    notify('Memória excluída.');
+    renderPage('memorias');
+  } catch (err) {
+    notify(err.message, 'error');
   }
 }
 
@@ -3684,7 +4041,7 @@ function showLogin() {
         notify('✅ Login administrativo realizado!');
         renderPage(currentPage);
       } catch (err) {
-        notify('❌ E-mail ou senha incorretos.');
+        notify('❌ E-mail ou senha incorretos.', 'error');
       }
     };
   }
@@ -3712,6 +4069,47 @@ function showEdit(html) {
   $('#editDialogBody').innerHTML = html;
   $('#editDialog').showModal();
 }
+
+Object.assign(window, {
+  addCardModal,
+  addGoalModal,
+  batchDeleteDuesModal,
+  batchGenerateDuesModal,
+  deleteAthleteAction,
+  deleteDuesAction,
+  deleteExpenseAction,
+  deleteJuizAction,
+  deleteMatchAction,
+  deleteMemoriaAction,
+  deleteNoticeAction,
+  editAthleteModal,
+  editJuizModal,
+  editMatchSchedule,
+  editMemoriaModal,
+  editNoticeModal,
+  editSeasonModal,
+  editTeamModal,
+  logoutAdmin,
+  newExpenseModal,
+  openPublicAttendanceModal,
+  openStatsEntryModal,
+  openSumulaModal,
+  openWhatsAppCardModal,
+  quickAddAssistForAthlete,
+  quickAddCardForAthlete,
+  quickAddGoalForAthlete,
+  quickRemoveAssistForAthlete,
+  quickRemoveCardForAthlete,
+  quickRemoveGoalForAthlete,
+  removeCardAction,
+  removeGoalAction,
+  resetDemoDataConfirm,
+  showAdminControlPanel,
+  showAthleteSelector,
+  toggleAttendanceAdmin,
+  toggleFinishMatch,
+  togglePaymentStatus
+});
 
 // Inicializa a aplicação
 init().catch(err => {
